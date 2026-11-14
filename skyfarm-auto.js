@@ -3,7 +3,7 @@
  *
  * 由 Tampermonkey 透過 @require 載入（設定見 skyfarm-auto.loader.user.js）。
  *
- * 功能（0.9.0）：
+ * 功能（0.10.0）：
  *   - Alt+Shift+S：跳出輸入框，輸入「這次要自動種植的作物」（中文名稱或代號皆可）
  *   - Alt+Shift+A：開啟／關閉自動功能（每次載入頁面一律預設 OFF，不會記住 ON）；
  *                  還沒設定作物就按開啟時，會先跳出輸入框，確認後才開始
@@ -12,7 +12,8 @@
  *   - 自動功能開啟後，只處理「設定的作物」，每個週期依序處理：
  *       1. 遊戲跳出「農產倉庫滿了」視窗 → 按「先不收成」，並標記要賣出
  *       2. 倉庫剩餘空位 ≤ 門檻 → 開啟倉庫視窗、賣掉設定的作物（含有機版）、關閉倉庫視窗
- *       3. 成熟的設定作物 → 收成；空的田 → 種下設定的作物
+ *       3. 成熟的設定作物 → 收成；空的田 → 種下設定的作物。
+ *          有空田但金幣不夠買種子 → 直接賣掉倉庫裡設定的作物換錢，不等倉庫快滿（CONFIG.sellWhenCantPlant）
  *       4. 還在長（或已枯萎）的設定作物，濕度低於門檻 → 切到澆水工具澆到滿（只用雨水）
  *       5. 作物長蟲 → 切到「照顧」工具選「捉蟲」，每格點 3 下抓光（免費）；蟲沒抓光前該格不收成、不澆水。
  *          不噴農藥、不施肥（會花錢，也會讓有機作物變一般作物）。其他種類作物長蟲也會抓。
@@ -55,7 +56,7 @@
   'use strict';
 
   const NAME = 'SkyFarmAuto';
-  const VERSION = '0.9.0';
+  const VERSION = '0.10.0';
   const BADGE_ID = 'skyfarm-auto-badge';
   const PANEL_ID = 'skyfarm-auto-panel';
 
@@ -96,6 +97,7 @@
     handleOtherCrops: false, // false＝只處理設定的作物，田裡其他作物不收成也不澆水；true＝也收成／澆水（但不會賣）
     minCoinsAfterPlant: 0, // 播種後至少要剩多少金幣（避免把錢花光）
 
+    sellWhenCantPlant: true, // 有空田、但金幣不夠買種子時，直接賣掉倉庫裡設定的作物換錢，不等倉庫快滿
     sellWhenFreeAtMost: 5, // 倉庫剩餘空位 ≤ 此值就開始賣出（只賣設定的作物與它的有機版）
     sellRetryMs: 30000, // 賣不出東西時，隔多久才再試一次
   };
@@ -140,7 +142,9 @@
   });
   let stats = newStats();
   const wetting = new Set(); // 正在澆到目標濕度的格子（避免在門檻附近來回澆）
-  let needSell = false; // 曾被「倉庫滿了」視窗擋住，下個週期優先賣出
+  let lastRenderAt = 0; // 右下角標籤上次重畫的時間（「上次動作」要每秒更新一次）
+  let lastActionAt = 0; // 上一次真的做成一件事（收成、播種、賣出…）的時間，顯示在右下角方便看出有沒有停住
+  let needSell = false; // 曾被「倉庫滿了」視窗擋住，或金幣不夠買種子，下個週期優先賣出
   let sellBlockedUntil = 0; // 賣不出東西時的暫停時間
   const cooldown = new Map(); // 格子座標 → { kind, until, fails }，避免對同一格狂點
 
@@ -245,6 +249,18 @@
       canLoad: used < cap && inputsOk && stockOk,
       inputLeft: S.inv[firstInput] || 0,
     };
+  }
+
+  // 倉庫裡設定的作物（含有機版）有幾個
+  const targetStock = (S) =>
+    targetCrop ? (S.inv[targetCrop.id] || 0) + (S.inv['org_' + targetCrop.id] || 0) : 0;
+
+  // 秒數 → 「3 分 20 秒」「1 小時 5 分」
+  function fmtSec(sec) {
+    const s = Math.max(0, Math.round(sec));
+    if (s < 60) return s + ' 秒';
+    if (s < 3600) return Math.floor(s / 60) + ' 分 ' + (s % 60) + ' 秒';
+    return Math.floor(s / 3600) + ' 小時 ' + Math.floor((s % 3600) / 60) + ' 分';
   }
 
   // 倉庫裡哪些物品要賣：只賣設定的作物與它的有機版（有機作物收成後 id 是 org_<作物 id>）
@@ -360,6 +376,7 @@
       const sold = before - storageInfo(g).used;
       if (sold > 0) {
         stats.sellRuns += 1;
+        lastActionAt = Date.now();
         log('賣出 ' + sold + ' 件物品');
       } else {
         sellBlockedUntil = Date.now() + CONFIG.sellRetryMs;
@@ -495,6 +512,8 @@
     const canWater = CONFIG.autoWater && S.player.water >= tapCost;
 
     const now = Date.now();
+    // 切換遊戲工具需要一個週期；如果一直卡在這裡，右下角會一直顯示，方便看出是工具切不過去
+    const switching = (label) => setStatus('切換工具中（' + label + '）…');
     const harvests = [];
     const plants = [];
     const waters = [];
@@ -507,6 +526,10 @@
     const weedCand = []; // 雜草、草球候選：等其他東西都排好、算過剩餘空位再決定拔不拔
     let blockedPick = false; // 有東西可收但倉庫沒空位
     let others = 0; // 田裡其他種類的作物（不處理）
+    let ripeBlocked = 0; // 成熟了、但倉庫放不下所以還沒收的作物格數
+    let unaffordable = 0; // 空田、但金幣不夠買種子所以還沒種的格數
+    let growing = 0; // 還在長的設定作物格數
+    let minLeft = Infinity; // 其中最快還要幾秒成熟（照濕潤時的速度算，乾的會更久）
 
     // 長蟲的格子要抓蟲；連續抓不掉就不再卡住這格。回傳 true＝這格交給抓蟲處理，其他動作先跳過
     const wantPestCatch = (k) => {
@@ -643,24 +666,49 @@
       if (T.crop) {
         if (isRipe(T, CFG)) {
           wetting.delete(k);
-          if (!canHarvest) continue;
+          if (!canHarvest) {
+            if (CONFIG.autoHarvest) ripeBlocked += 1;
+            continue;
+          }
           const need = CFG.crops[T.crop.id].yield || 1;
           if (need <= room) {
             harvests.push(k);
             room -= need;
-          } else if (CONFIG.autoSell) {
-            needSell = true; // 倉庫還有空位但放不下這次收成：也要賣出騰空間，否則會一直卡住
+          } else {
+            ripeBlocked += 1;
+            if (CONFIG.autoSell) needSell = true; // 倉庫還有空位但放不下這次收成：也要賣出騰空間，否則會一直卡住
           }
-        } else if (canWater) {
-          wantWater(k, T, T.crop.wither); // 還在長的作物（含枯萎的）：濕度不夠就澆
+        } else {
+          if (!T.crop.wither) {
+            growing += 1;
+            minLeft = Math.min(minLeft, CFG.crops[T.crop.id].growSeconds - T.crop.prog);
+          }
+          if (canWater) wantWater(k, T, T.crop.wither); // 還在長的作物（含枯萎的）：濕度不夠就澆
         }
-      } else if (canPlant && !T.flower) {
+      } else if (!T.flower) {
         // 有花的田（T.flower）不是空田：對它用播種工具會動到花，所以跳過
-        plants.push(k);
+        if (canPlant) plants.push(k);
+        else if (CONFIG.autoPlant) unaffordable += 1; // 金幣不夠買種子
       }
     }
 
     const hints = [];
+    // 把「為什麼沒做」寫出來，不要讓右下角只說「沒有需要處理的田」
+    if (ripeBlocked > 0) hints.push('倉庫放不下，' + ripeBlocked + ' 格成熟作物還沒收');
+    if (unaffordable > 0) {
+      const need = seed.seedCost + CONFIG.minCoinsAfterPlant;
+      const have = Math.floor(S.player.coins);
+      const stock = targetStock(S);
+      if (CONFIG.autoSell && CONFIG.sellWhenCantPlant && stock > 0) {
+        needSell = true; // 金幣不夠買種子：先把倉庫裡的設定作物賣掉換錢，不等倉庫快滿
+        hints.push('金幣不夠播種（要 ' + need + '，有 ' + have + '），先賣出' + targetCrop.name);
+      } else {
+        hints.push(
+          '金幣不夠播種（要 ' + need + '，有 ' + have + '）' +
+            (stock > 0 ? '' : '，倉庫也沒有可賣的' + targetCrop.name)
+        );
+      }
+    }
 
     // 魚池：一個池點一下。有長成的魚 → 收成（倉庫要放得下）；沒有、且開了 autoFeedFish → 餵食（只用倉庫現有的飼料）。
     // 絕不補魚苗（要花錢）。
@@ -730,11 +778,15 @@
         work.care = false;
         mode = pickMode();
       } else if (!r) {
-        return;
+        return switching('照顧／捉蟲');
       }
     }
     if (!mode) {
-      setStatus('運作中（沒有需要處理的田）' + (hints.length ? '｜' + hints.join('｜') : ''));
+      // 沒有事做：說明是在等作物長大，還是被什麼擋住
+      if (growing > 0) {
+        hints.push(growing + ' 格' + targetCrop.name + '還在長，最快約 ' + fmtSec(minLeft) + ' 後成熟');
+      }
+      setStatus('運作中（暫時沒有事做）' + (hints.length ? '｜' + hints.join('｜') : ''));
       return;
     }
 
@@ -742,13 +794,13 @@
     if (mode === 'care') {
       queue = pests.map((k) => [k, 'pest']);
     } else if (mode === 'water') {
-      if (!ensureToolIs(g, 'water')) return;
+      if (!ensureToolIs(g, 'water')) return switching('澆水');
       queue = waters.map((k) => [k, 'water']).concat(tilts);
     } else if (mode === 'hand') {
-      if (!ensureToolIs(g, 'hand')) return;
+      if (!ensureToolIs(g, 'hand')) return switching('收成');
       queue = handQueue;
     } else {
-      if (!prepareTool(g)) return;
+      if (!prepareTool(g)) return switching('播種／選種子');
       queue = harvests.map((k) => [k, 'harvest']).concat(plants.map((k) => [k, 'plant']), pools);
     }
 
@@ -838,6 +890,7 @@
       } else ok = !!T && ((T.m || 0) > before.m + 0.01 || (before.wither && !!T.crop && !T.crop.wither));
 
       if (ok) {
+        lastActionAt = Date.now();
         if (kind === 'harvest') {
           stats.harvest += 1;
           sellBlockedUntil = 0; // 倉庫裡有了新作物，之前「沒東西可賣」的暫停就不算數了
@@ -883,7 +936,15 @@
       setStatus('等待遊戲載入…');
       return;
     }
-    if (g.RT && g.RT.mv) return; // 玩家正在搬移物件，不打擾
+    if (g.RT && g.RT.mv) {
+      setStatus('你正在搬移物件，暫停中'); // 不打擾；放下或取消搬移後會繼續
+      return;
+    }
+    if (document.body && document.body.classList.contains('ui-hide')) {
+      // 遊戲按了「全部隱藏」：介面隱藏時遊戲會忽略所有點擊，腳本做什麼都沒用，先暫停
+      setStatus('遊戲介面被隱藏（「全部隱藏」），暫停中');
+      return;
+    }
     if (panel) {
       setStatus('設定作物中…');
       return; // 玩家正在輸入作物，先暫停
@@ -917,7 +978,7 @@
       (info.free !== null && info.free <= CONFIG.sellWhenFreeAtMost) ||
       (info.free === null && info.fullFlag);
     if (CONFIG.autoSell && (needSell || nearlyFull) && Date.now() >= sellBlockedUntil) {
-      setStatus('倉庫快滿，賣出中…');
+      setStatus(nearlyFull ? '倉庫快滿，賣出中…' : '賣出中…');
       await sellFlow(g);
       return;
     }
@@ -926,6 +987,7 @@
   }
 
   function onTick() {
+    if (Date.now() - lastRenderAt >= 1000) renderBadge(false); // 讓「上次動作：N 秒前」跟著走
     if (ticking) return;
     ticking = true;
     tick()
@@ -947,6 +1009,7 @@
       stats = newStats();
       needSell = false;
       sellBlockedUntil = 0;
+      lastActionAt = 0;
       cooldown.clear();
       wetting.clear();
       status = '啟動中';
@@ -1035,10 +1098,13 @@
       lines.push(
         '果樹 ' + stats.fruit + '｜魚池 ' + stats.fish + '｜機器 ' + stats.machine + '｜雜物 ' + stats.clean
       );
+      // 上一次真的做成事的時間：數字不動、又一直很久以前，就是停住了，看下一行的原因
+      lines.push(lastActionAt ? '上次動作：' + fmtSec((Date.now() - lastActionAt) / 1000) + '前' : '開啟後還沒做成任何事');
       if (status) lines.push(status);
     }
     if (note) lines.push(note);
     badge.textContent = lines.join('\n');
+    lastRenderAt = Date.now();
   }
 
   function initBadge() {
@@ -1175,13 +1241,20 @@
     const text = JSON.stringify(report, null, 2);
     log('診斷結果（唯讀、已移除網址參數）：\n' + text);
 
+    // 摘要直接顯示在右下角（不必靠剪貼簿，剪貼簿在某些瀏覽器設定下會被擋）
+    const G = report.game;
+    const summary = G.api
+      ? '診斷：成熟 ' + G.tiles.ripe + '｜空田 ' + G.tiles.empty + '｜生長中 ' + G.tiles.growing +
+        '｜倉庫 ' + G.storage.used + '/' + G.storage.cap + '｜金幣 ' + G.coins + '｜雨水 ' + G.rainWater
+      : '診斷：遊戲介面還沒載入';
+
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(text).then(
-        () => setNote('診斷結果已複製到剪貼簿', 4000),
-        () => setNote('複製失敗，請從 console 複製', 4000)
+        () => setNote(summary + '\n完整結果已複製到剪貼簿（也在 Console）', 12000),
+        () => setNote(summary + '\n複製失敗，完整結果請從 Console 複製', 12000)
       );
     } else {
-      setNote('無法存取剪貼簿，請從 console 複製', 4000);
+      setNote(summary + '\n無法存取剪貼簿，完整結果請從 Console 複製', 12000);
     }
   }
 
