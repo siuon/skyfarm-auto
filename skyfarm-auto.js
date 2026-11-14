@@ -3,7 +3,7 @@
  *
  * 由 Tampermonkey 透過 @require 載入（設定見 skyfarm-auto.loader.user.js）。
  *
- * 功能（0.11.0）：
+ * 功能（0.11.1）：
  *   - Alt+Shift+S：跳出輸入框，輸入「這次要自動種植的作物」（中文名稱或代號皆可）
  *   - Alt+Shift+A：開啟／關閉自動功能（每次載入頁面一律預設 OFF，不會記住 ON）；
  *                  還沒設定作物就按開啟時，會先跳出輸入框，確認後才開始
@@ -59,7 +59,7 @@
   'use strict';
 
   const NAME = 'SkyFarmAuto';
-  const VERSION = '0.11.0';
+  const VERSION = '0.11.1';
   const BADGE_ID = 'skyfarm-auto-badge';
   const PANEL_ID = 'skyfarm-auto-panel';
 
@@ -421,7 +421,10 @@
   //   1. 切到播種工具  2. 點一下種子列裡設定的作物
   function prepareTool(g) {
     const sel = g.S.sel;
-    if (!ensureToolIs(g, 'seed')) return false;
+    if (!ensureToolIs(g, 'seed')) {
+      setStatus('切換工具中（播種）…');
+      return false;
+    }
     const want = targetCrop.id;
     if (sel.none49 || sel.seed !== want) {
       const item = document.querySelector('#tray .item[data-id="' + want + '"]');
@@ -430,6 +433,7 @@
         return false;
       }
       item.click();
+      setStatus('切換工具中（選種子）…');
       return false;
     }
     return true;
@@ -751,6 +755,8 @@
     }
 
     const hints = [];
+    if (CONFIG.autoWater && !canWater) hints.push('雨水不足，暫停澆水');
+    if (others > 0) hints.push('略過其他作物 ' + others + ' 格');
     // 把「為什麼沒做」寫出來，不要讓右下角只說「沒有需要處理的田」
     if (hungryUnfed > 0) {
       const lack = Object.entries(feedShort)
@@ -864,7 +870,7 @@
       if (!ensureToolIs(g, 'hand')) return switching('收成');
       queue = handQueue;
     } else {
-      if (!prepareTool(g)) return switching('播種／選種子');
+      if (!prepareTool(g)) return; // prepareTool 自己會寫明是在切工具、還是種子用不了
       queue = harvests.map((k) => [k, 'harvest']).concat(plants.map((k) => [k, 'plant']), pools);
     }
 

@@ -1,0 +1,14 @@
+{
+  "name": "skyfarm-auto",
+  "private": true,
+  "description": "浮島農場 SkyFarm 遊戲輔助（Tampermonkey 使用者腳本）的測試與工具。沒有任何相依套件，只用 Node 內建功能。",
+  "scripts": {
+    "check-version": "node tools/check-game-version.js",
+    "fetch-game": "node tools/fetch-game.js",
+    "test": "node --test \"test/unit/*.test.js\" \"test/release/*.test.js\"",
+    "test:contract": "node tools/fetch-game.js && node --test \"test/contract/*.test.js\"",
+    "mutation": "node test/mutation/run.js",
+    "record-version": "node tools/record-game-version.js",
+    "verify": "node tools/check-game-version.js && npm test && npm run test:contract && npm run mutation"
+  }
+}

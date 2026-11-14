@@ -1,2 +1,8 @@
 # 本機專用的載入器（file:/// 路徑，別台電腦用不到）
 skyfarm-auto.loader.user.js
+
+# 官方遊戲的快取（不是本專案的檔案，不進版控）
+.cache/
+
+# 不使用任何相依套件，但以防萬一
+node_modules/
