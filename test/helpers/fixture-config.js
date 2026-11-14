@@ -50,6 +50,10 @@ function makeCfg() {
       maxLevel: 5, batchesPerLevel: 1,
       appliesTo: ['fish_feed_machine', 'corn_cake_machine', 'compost_bin'],
     },
+    devices: {
+      beehive: { name: '蜂箱', kind: 'hive' },
+      well: { name: '水井', kind: 'well' },
+    },
     feedShop: { pasture: 4, corn_cake: 6, fish_feed: 5 },
     items: {
       wheat: { name: '小麥', category: 'crop', sellPrice: 15 },
@@ -70,6 +74,8 @@ function makeCfg() {
       organic_fert: { name: '有機肥', category: 'material', sellPrice: 5 },
       orange: { name: '柳丁', category: 'fruit', sellPrice: 40 },
       tilapia: { name: '吳郭魚', category: 'fish', sellPrice: 25 },
+      honey_wild: { name: '野蜂蜜', category: 'honey', sellPrice: 20 },
+      honey_rose: { name: '玫瑰蜜', category: 'honey', sellPrice: 40 },
     },
   };
 }

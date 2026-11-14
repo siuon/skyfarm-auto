@@ -84,15 +84,26 @@ test('每個週期最多動 maxActionsPerTick 格', async () => {
   assert.equal(ctx.world.acts.length, 4);
 });
 
-test('其他種類的作物預設不收、不澆水；標籤會說略過幾格；handleOtherCrops 開了才處理', async () => {
-  const tiles = { '0,0': soil({ crop: ripe('tomato', cfg) }), '1,0': soil({ crop: crop('tomato', 10), m: 0 }) };
-  let ctx = boot({ tiles });
+test('其他種類的作物：成熟了就收（只收，不澆水）；還在長的不碰，標籤說略過幾格', async () => {
+  const mk = () => ({ '0,0': soil({ crop: ripe('tomato', cfg) }), '1,0': soil({ crop: crop('tomato', 10), m: 0 }) });
+  const ctx = boot({ tiles: mk() });
+  await run(ctx, 4);
+  assert.equal(ctx.world.S.inv.tomato, 2, '成熟的番茄收了（產量 2）');
+  assert.equal(ctx.world.acts.filter((a) => a.k === '1,0').length, 0, '還在長的其他作物不點、不澆水');
+  assert.equal(ctx.world.M.tiles['1,0'].m, 0);
+  assert.match(status(ctx), /略過其他作物 1 格/);
+});
+
+test('harvestOtherCrops 關掉：其他種類的作物完全不動（連成熟的也不收）；handleOtherCrops 開了才也澆水', async () => {
+  const mk = () => ({ '0,0': soil({ crop: ripe('tomato', cfg) }), '1,0': soil({ crop: crop('tomato', 10), m: 0 }) });
+  let ctx = boot({ tiles: mk() }, { flags: { harvestOtherCrops: false } });
   await run(ctx, 4);
   assert.equal(ctx.world.acts.length, 0);
   assert.match(status(ctx), /略過其他作物 2 格/);
-  ctx = boot({ tiles: { '0,0': soil({ crop: ripe('tomato', cfg) }) } }, { flags: { handleOtherCrops: true } });
-  await run(ctx, 4);
-  assert.equal(ctx.world.S.inv.tomato, 2, '開了 handleOtherCrops 才收（番茄產量 2）');
+  ctx = boot({ tiles: mk() }, { flags: { handleOtherCrops: true } });
+  await run(ctx, 6);
+  assert.equal(ctx.world.S.inv.tomato, 2, 'handleOtherCrops 開了：照設定作物的方式收成');
+  assert.ok(ctx.world.M.tiles['1,0'].m > 0, 'handleOtherCrops 開了：也澆水');
 });
 
 test('澆水：濕度低於 waterBelow 才開始澆，澆到 waterUpTo（預設滿）才停；中間不會來回', async () => {

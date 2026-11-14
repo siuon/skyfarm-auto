@@ -6,7 +6,7 @@
  *   - 動物離家超過 0.55 格時，點牠的家要有 RT.lastAnimalTap 記號才算點到
  *   - 沿邊柵欄：用收成工具點有東西的格子，先跳「這一格有：」選單
  *   - 倉庫放不下時跳「農產倉庫滿了」視窗（測試會斷言這種視窗不該出現）
- * 它記錄「危險動作」計數（宰掉肉用動物、升級機器、用了農藥…），讓「絕不做」的測試可以直接斷言為 0。
+ * 它記錄「危險動作」計數（升級機器、用了農藥、點到沒蜂蜜的蜂箱而開出面板…）與「出貨了哪些肉用動物」，讓測試可以直接斷言。
  */
 const { FakeEl } = require('./fake-dom');
 const { makeCfg } = require('./fixture-config');
@@ -36,7 +36,7 @@ function attachWorld(env, o = {}) {
     acts: [], // 每次 act 的紀錄
     fullPrompts: 0, // 跳出「農產倉庫滿了」的次數
     // 「絕不做」計數
-    slaughtered: [], upgrades: 0, chemUsed: 0, deletedWild: 0, boughtFeed: 0, coinsSpentOnFeed: 0,
+    shipped: [], hivePanels: 0, upgrades: 0, chemUsed: 0, deletedWild: 0, boughtFeed: 0, coinsSpentOnFeed: 0,
     toasts: [],
   };
 
@@ -157,7 +157,7 @@ function attachWorld(env, o = {}) {
   function tapAnimal(k, T) {
     const A = CFG.animals[T.id];
     if (A.type === 'meat' && isAdult(T, A)) {
-      world.slaughtered.push(k);
+      world.shipped.push(k); // 長大了的肉用動物：點下去 1 份肉進倉庫、動物消失（官方 tapAnimal）
       deliver([{ id: A.productItem, qty: 1 }], () => { delete M.tiles[k]; });
       return;
     }
@@ -176,6 +176,14 @@ function attachWorld(env, o = {}) {
       }
       feedAnimal(T, A);
     }
+  }
+
+  // 蜂箱（官方：收成工具點蜂箱，有蜂蜜就整箱收進倉庫；沒有就開蜂箱面板）
+  const honeyStored = (T) => Object.values(T.honey || {}).reduce((a, b) => a + b, 0);
+  function tapHive(T) {
+    if (!honeyStored(T)) { world.hivePanels += 1; modal.hidden = false; modalTitle.textContent = '蜂箱'; return; }
+    const goods = Object.entries(T.honey).filter(([, n]) => n > 0).map(([id, qty]) => ({ id, qty }));
+    deliver(goods, () => { T.honey = {}; });
   }
 
   function poolCells(P) { return P.tiles.map((t) => M.tiles[t]).filter((T) => T && T.t === 'pool' && T.fish); }
@@ -281,6 +289,7 @@ function attachWorld(env, o = {}) {
       }
       return;
     }
+    if (tool === 'hand' && T && T.t === 'device' && CFG.devices[T.id] && CFG.devices[T.id].kind === 'hive') { tapHive(T); return; }
     if (tool !== 'hand' && tool !== 'seed') return;
     if (T && T.t === 'soil') {
       if (T.crop) {

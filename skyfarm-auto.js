@@ -3,7 +3,7 @@
  *
  * 由 Tampermonkey 透過 @require 載入（設定見 skyfarm-auto.loader.user.js）。
  *
- * 功能（0.11.1）：
+ * 功能（0.12.0）：
  *   - Alt+Shift+S：跳出輸入框，輸入「這次要自動種植的作物」（中文名稱或代號皆可）
  *   - Alt+Shift+A：開啟／關閉自動功能（每次載入頁面一律預設 OFF，不會記住 ON）；
  *                  還沒設定作物就按開啟時，會先跳出輸入框，確認後才開始
@@ -18,21 +18,26 @@
  *       5. 作物長蟲 → 切到「照顧」工具選「捉蟲」，每格點 3 下抓光（免費）；蟲沒抓光前該格不收成、不澆水。
  *          不噴農藥、不施肥（會花錢，也會讓有機作物變一般作物）。其他種類作物長蟲也會抓。
  *       6. 地上的動物糞便 → 點掉（收進倉庫）；生產型動物累積的產物（蛋、奶、羊毛…）→ 點動物收走。
- *          肉用動物一點就會被宰掉，絕對不碰。撿起來的東西放進倉庫，倉庫沒空位就暫停撿拾。
+ *          長大了的肉用動物 → 出貨（點一下，肉進倉庫、動物就沒了；遊戲規定長大 2 天沒收牠會自己死掉，
+ *          所以收掉才是對的；小動物不會補買，CONFIG.autoHarvestMeatAnimals）。還沒長大的肉用動物絕不點（要餵，不是收）。
+ *          撿起來的東西放進倉庫，倉庫沒空位就暫停撿拾。
  *          （點動物收產物時，遊戲會照一般規則順便餵食，跟你手動點一樣。）
- *       6b. 餓了的動物 → 點一下餵食（成長階段、產物型成年後都要餵；肉用型長大後不碰）。
+ *       6b. 餓了的動物 → 點一下餵食（成長階段、產物型成年後都要餵；肉用型長大後不用餵，直接出貨）。
  *          先用倉庫現有的飼料；不夠時，遊戲開著「飼料不夠時自動買」、且補買後金幣還高於
  *          CONFIG.minCoinsAfterBuyFeed，才會用金幣照商店價補買（CONFIG.buyFeedWhenShort）。
  *       7. 被風吹歪的裝飾、倒下的柵欄 → 扶正（免費；用「澆水」工具點，不會用到水）。
  *          地上的雜物：碎石等垃圾直接撿掉（不佔倉庫）；雜草、草球拔掉會收進倉庫，
  *          只有拔完倉庫還剩 CONFIG.weedKeepFree 個空位以上、而且倉庫裡的雜草不超過 CONFIG.weedMaxStock 個才拔
  *          （雜草不值錢也不會自動賣，不能擠掉作物的位置；超過就留在地上）。
- *       8. 果樹結果了 → 採收；有蟲 → 抓蟲。魚池有魚長成了 → 收成；機器做好了 → 收成品。
+ *       8. 果樹結果了 → 採收；有蟲 → 抓蟲。魚池有魚長成了 → 收成；機器做好了 → 收成品；
+ *          蜂箱裡存了蜂蜜 → 收進倉庫（點到沒蜂蜜的蜂箱會跳蜂箱面板，所以只點有蜂蜜的）。
  *          （都只在倉庫放得下時才收。補魚苗、升級機器一律不碰。）
+ *       9. 田裡不是設定作物的作物：成熟了也收成（CONFIG.harvestOtherCrops；只收、不澆水、不賣，
+ *          倉庫要放得下、收完還剩 CONFIG.otherCropsKeepFree 個空位才收，免得擠掉設定作物的位置）。
  *       以下三項會用到你的資源，預設關閉，要用請改 CONFIG：
  *          autoWaterTrees（果樹也澆雨水）、autoFeedFish（用倉庫現有的飼料餵魚，不會自動買）、
  *          autoLoadMachines（機器自動投料，只投 loadMachineIds 裡的機器，成品庫存有上限）
- *       其他種類的作物預設不動（CONFIG.handleOtherCrops）
+ *       其他種類的作物預設只收成、不澆水（CONFIG.handleOtherCrops 開了才也澆水）
  *
  * 資料來源（不需要辨識 canvas 畫面）：
  *   遊戲自己在 window 上公開了除錯介面，本腳本只用兩個：
@@ -59,7 +64,7 @@
   'use strict';
 
   const NAME = 'SkyFarmAuto';
-  const VERSION = '0.11.1';
+  const VERSION = '0.12.0';
   const BADGE_ID = 'skyfarm-auto-badge';
   const PANEL_ID = 'skyfarm-auto-panel';
 
@@ -77,8 +82,10 @@
     autoPlant: true, // 空的田自動播種
     autoSell: true, // 倉庫快滿時自動開倉庫賣出
     autoPickPoop: true, // 地上的動物糞便自動點掉（收進倉庫；倉庫沒空位就暫停）
-    autoCollectAnimalProducts: true, // 生產型動物累積的產物（蛋、奶、羊毛…）自動收；肉用動物不碰
-    autoFeedAnimals: true, // 餓了的動物自動餵（點一下）；只用倉庫現有的飼料，不夠就不餵、不自動買。肉用動物長大後不碰
+    autoCollectAnimalProducts: true, // 生產型動物累積的產物（蛋、奶、羊毛…）自動收
+    autoHarvestMeatAnimals: true, // 長大了的肉用動物自動出貨（點一下，肉進倉庫、動物就沒了；不收的話長大 2 天後牠會自己死掉）。不會補買小動物
+    autoCollectHoney: true, // 蜂箱裡存的蜂蜜自動收進倉庫（倉庫放得下才收）
+    autoFeedAnimals: true, // 餓了的動物自動餵（點一下）；只用倉庫現有的飼料，不夠就不餵、不自動買。肉用動物長大後不用餵（直接出貨）
     buyFeedWhenShort: true, // 飼料不夠時，在遊戲開著「飼料不夠時自動買」的前提下，用金幣照商店價補買（補買後金幣要高於 minCoinsAfterBuyFeed）
     minCoinsAfterBuyFeed: 100, // 補買飼料後至少要剩多少金幣（只有開了 buyFeedWhenShort 才用到）
     autoStraighten: true, // 被風吹歪的裝飾、倒下的柵欄自動扶正（免費、不佔倉庫；用「澆水」工具點，不會用到水）
@@ -100,7 +107,9 @@
     waterBelow: 1, // 濕度（0～4 級，每澆一下 +1 級）低於這個值就開始澆
     waterUpTo: null, // 澆到幾級為止；null＝澆到滿
 
-    handleOtherCrops: false, // false＝只處理設定的作物，田裡其他作物不收成也不澆水；true＝也收成／澆水（但不會賣）
+    harvestOtherCrops: true, // 田裡「不是設定作物」的作物，成熟了也收成（只收、不澆水、不賣；空出來的田照常補種設定作物）
+    otherCropsKeepFree: 10, // 收其他作物後倉庫至少要還剩這麼多空位（它們不會自動賣，不能擠掉設定作物的位置）
+    handleOtherCrops: false, // false＝其他作物不澆水（成熟了仍照 harvestOtherCrops 收）；true＝也澆水，收成不受 otherCropsKeepFree 限制（但不會賣）
     minCoinsAfterPlant: 0, // 播種後至少要剩多少金幣（避免把錢花光）
 
     sellWhenCantPlant: true, // 有空田、但金幣不夠買種子時，直接賣掉倉庫裡設定的作物換錢，不等倉庫快滿
@@ -144,7 +153,7 @@
 
   const newStats = () => ({
     harvest: 0, plant: 0, water: 0, pest: 0, pick: 0, sellRuns: 0,
-    clean: 0, fruit: 0, fish: 0, machine: 0, feed: 0,
+    clean: 0, fruit: 0, fish: 0, machine: 0, feed: 0, honey: 0, meat: 0,
   });
   let stats = newStats();
   const wetting = new Set(); // 正在澆到目標濕度的格子（避免在門檻附近來回澆）
@@ -270,6 +279,12 @@
     return T.cycles > 0 && !(cap > 0 && (T.stack || 0) >= cap);
   }
   const animalFeedNeed = (T, A) => (isAdultAnimal(T, A) ? A.cycleFeedQty : A.stageFeedQty);
+
+  // 蜂箱（device，種類是 hive）裡存了幾罐蜂蜜。用「收成」工具點有蜂蜜的蜂箱，遊戲會把整箱收進倉庫；
+  // 點到沒蜂蜜的蜂箱則會改開蜂箱面板（那是玩家自己的視窗），所以沒蜂蜜的蜂箱絕不點。
+  const isHive = (T, CFG) =>
+    !!T && T.t === 'device' && !!(CFG.devices && CFG.devices[T.id] && CFG.devices[T.id].kind === 'hive');
+  const honeyStored = (T) => Object.values(T.honey || {}).reduce((a, b) => a + (b > 0 ? b : 0), 0);
 
   // 倉庫裡設定的作物（含有機版）有幾個
   const targetStock = (S) =>
@@ -561,7 +576,9 @@
     let hungryAnimals = 0; // 餓了的動物隻數
     let hungryUnfed = 0; // 其中因為飼料不夠而沒餵的
     let blockedPick = false; // 有東西可收但倉庫沒空位
-    let others = 0; // 田裡其他種類的作物（不處理）
+    let others = 0; // 田裡其他種類的作物（還在長，不澆水也不處理）
+    const otherRipe = []; // 田裡其他種類、已經成熟的作物：[格子, 產量]（等其他東西都排好、算過剩餘空位再決定收不收）
+    let otherBlocked = 0; // 其中因為倉庫空位不夠而先不收的格數
     let ripeBlocked = 0; // 成熟了、但倉庫放不下所以還沒收的作物格數
     let unaffordable = 0; // 空田、但金幣不夠買種子所以還沒種的格數
     let growing = 0; // 還在長的設定作物格數
@@ -653,6 +670,24 @@
         continue;
       }
 
+      // 蜂箱：存了蜂蜜就收（整箱一次收進倉庫，所以要放得下整箱）；其他設備（水井、灑水器…）不碰
+      if (T.t === 'device') {
+        if (!isHive(T, CFG)) continue;
+        const cdh = cooldown.get(k);
+        if (cdh && cdh.until > now) continue;
+        const jars = honeyStored(T);
+        if (jars > 0) {
+          if (!CONFIG.autoCollectHoney) continue;
+          if (jars <= room) {
+            pickups.push([k, 'honey']);
+            room -= jars;
+          } else {
+            blockedPick = true;
+          }
+        }
+        continue;
+      }
+
       // 地上的東西：糞便、動物產出的東西（蛋、奶、羊毛…）。點一下就收進倉庫，所以要倉庫放得下。
       if (T.t === 'poop' || T.t === 'animal') {
         const cdk = cooldown.get(k);
@@ -668,7 +703,19 @@
         } else {
           const A = CFG.animals[T.id];
           if (!A) continue;
-          // 只收「生產型」動物已經累積的產物。肉用動物長大後一點就會被宰掉換肉，絕對不碰。
+          // 長大了的肉用動物：出貨（點一下，1 份肉進倉庫、動物消失）。遊戲規定長大後 2 天沒收牠就會死，
+          // 所以這是正常的收成；還沒長大的（要餵、不是收）不會進到這裡，由下面的餵食處理。
+          if (A.type === 'meat' && isAdultAnimal(T, A)) {
+            if (!CONFIG.autoHarvestMeatAnimals) continue;
+            if (room >= 1) {
+              pickups.push([k, 'meat']);
+              room -= 1;
+            } else {
+              blockedPick = true;
+            }
+            continue;
+          }
+          // 生產型動物已經累積的產物：點牠收走。
           // 收產物時遊戲會順便餵食（照遊戲的「飼料不夠時自動買」設定）。
           if (A.type === 'producer' && T.stack > 0) {
             if (!CONFIG.autoCollectAnimalProducts) continue;
@@ -720,7 +767,14 @@
       }
 
       if (T.crop && !CONFIG.handleOtherCrops && T.crop.id !== targetCrop.id) {
-        others += 1;
+        // 其他種類的作物：不澆水、不賣；成熟了就收（先記下來，等其他東西都排好、算過剩餘空位再決定）
+        if (CONFIG.autoHarvest && CONFIG.harvestOtherCrops && isRipe(T, CFG)) {
+          wetting.delete(k);
+          const cdo = cooldown.get(k);
+          if (!(cdo && cdo.until > now)) otherRipe.push([k, (CFG.crops[T.crop.id] || {}).yield || 1]);
+        } else {
+          others += 1;
+        }
         continue;
       }
       const cd = cooldown.get(k);
@@ -805,6 +859,18 @@
       }
     }
 
+    // 其他種類的成熟作物：收進倉庫的東西不會自動賣，所以排在設定作物、動物、果樹、魚池、機器之後，
+    // 而且收完要還剩 otherCropsKeepFree 個空位以上才收，不能把倉庫塞滿、害設定作物收不了也賣不了。
+    for (const [k, need] of otherRipe) {
+      if (canHarvest && room - need >= CONFIG.otherCropsKeepFree) {
+        harvests.push(k);
+        room -= need;
+      } else {
+        otherBlocked += 1;
+      }
+    }
+    if (otherBlocked > 0) hints.push('倉庫空位不多，' + otherBlocked + ' 格其他作物先不收');
+
     // 雜草、草球：拔掉要收進倉庫，只有拔完還剩 weedKeepFree 個空位以上才拔，而且排在其他東西之後，不搶它們的空位。
     // 空位不夠只是暫停，不會因此觸發賣出（雜草不值得賣東西去換空位）。
     // 倉庫裡的雜草也有上限（weedMaxStock）：雜草不值錢又不會自動賣掉，不設上限的話整個倉庫會被它佔滿。
@@ -825,7 +891,7 @@
     // 目前的工具還有事做就繼續用，做完才換，避免每個週期都來回切換；
     // 要換時優先順序是抓蟲 > 播種收成魚池 > 撿東西雜物 > 澆水。
     if (blockedPick) {
-      hints.push('倉庫沒空位，暫停收地上的東西、果樹、魚、機器成品');
+      hints.push('倉庫沒空位，暫停收地上的東西、果樹、魚、機器成品、蜂蜜、肉用動物');
       if (CONFIG.autoSell) needSell = true; // 賣掉設定的作物騰出空間
     }
     // 撿糞便、收動物產物、採果樹、收機器、撿雜物都用「收成」工具（hand）：實測用「播種」工具點動物格子不會收；
@@ -885,6 +951,7 @@
         wither: !!(T0 && T0.crop && T0.crop.wither),
         taps: (H0 && H0.pestTaps) || 0,
         stack: (T0 && T0.stack) || 0,
+        honey: 0,
         prog: (T0 && T0.prog) || 0,
         poolSig: '',
         machineOut: 0,
@@ -906,6 +973,16 @@
         if (!A || !animalHungry(T0, A, CFG)) continue;
         if (!extra && (S.inv[A.feedItem] || 0) < animalFeedNeed(T0, A)) continue;
         if (A.type === 'producer' && T0.stack > 0 && !CONFIG.autoCollectAnimalProducts) continue; // 點下去會順便收產物
+      }
+      // 蜂箱：一定要真的存著蜂蜜（沒有的話收成工具會改開蜂箱面板，那是玩家自己的視窗，不能被我們叫出來）
+      if (kind === 'honey') {
+        if (!CONFIG.autoCollectHoney || !isHive(T0, CFG) || honeyStored(T0) <= 0) continue;
+        before.honey = honeyStored(T0);
+      }
+      // 肉用動物：只有「確實長大了的肉用動物」才出貨；還沒長大的是餵食階段，點下去不是收成
+      if (kind === 'meat') {
+        const A = T0 && T0.t === 'animal' ? CFG.animals[T0.id] : null;
+        if (!CONFIG.autoHarvestMeatAnimals || !A || A.type !== 'meat' || !isAdultAnimal(T0, A)) continue;
       }
       if (kind === 'tree' && !(T0 && T0.t === 'tree' && treeReady(T0, CFG))) continue;
       if ((kind === 'weed' || kind === 'weedball' || kind === 'debris') && (!T0 || T0.t !== kind)) continue;
@@ -939,7 +1016,7 @@
         before.machineInput = ms.inputLeft;
       }
 
-      if ((kind === 'product' || kind === 'feed') && animalAway(g, k)) markAnimalTap(g, k); // 動物不在家：等同玩家點了畫面上看得到的牠
+      if ((kind === 'product' || kind === 'feed' || kind === 'meat') && animalAway(g, k)) markAnimalTap(g, k); // 動物不在家：等同玩家點了畫面上看得到的牠
       g.act(x, y);
       done += 1;
       // 點完如果跳出小選單（機器選單、沿邊柵欄的「這一格有：」、餓了的雞的「餵食」）：處理掉，不留著卡住自己
@@ -954,6 +1031,8 @@
       else if (kind === 'pest') ok = !!T && (!H || !H.pest || (H.pestTaps || 0) > before.taps);
       else if (kind === 'poop') ok = !T || T.t !== 'poop';
       else if (kind === 'product') ok = !T || (T.stack || 0) < before.stack;
+      else if (kind === 'honey') ok = !!T && isHive(T, CFG) && honeyStored(T) < before.honey;
+      else if (kind === 'meat') ok = !T || T.t !== 'animal';
       else if (kind === 'tree') ok = !!T && T.t === 'tree' && (T.prog || 0) < before.prog;
       else if (kind === 'feed') ok = !!T && T.t === 'animal' && (T.timer || 0) > 0;
       else if (kind === 'weed' || kind === 'weedball' || kind === 'debris') ok = !T || T.t !== kind;
@@ -980,6 +1059,10 @@
           stats.feed += 1;
         } else if (kind === 'poop' || kind === 'product') {
           stats.pick += 1;
+        } else if (kind === 'honey') {
+          stats.honey += 1;
+        } else if (kind === 'meat') {
+          stats.meat += 1;
         } else if (kind === 'tree') {
           stats.fruit += 1;
         } else if (kind === 'pool') {
@@ -1179,6 +1262,7 @@
         '果樹 ' + stats.fruit + '｜魚池 ' + stats.fish + '｜機器 ' + stats.machine + '｜雜物 ' + stats.clean +
           '｜餵食 ' + stats.feed
       );
+      lines.push('蜂蜜 ' + stats.honey + '｜出貨 ' + stats.meat);
       // 上一次真的做成事的時間：數字不動、又一直很久以前，就是停住了，看下一行的原因
       lines.push(lastActionAt ? '上次動作：' + fmtSec((Date.now() - lastActionAt) / 1000) + '前' : '開啟後還沒做成任何事');
       if (status) lines.push(status);
@@ -1229,6 +1313,7 @@
       poop: 0, animalsWithProduct: 0, meatAnimals: 0, weed: 0, weedball: 0, debris: 0, tiltedDeco: 0, fallenFence: 0,
     };
     const trees = { total: 0, ripe: 0, pest: 0 };
+    const hives = { total: 0, withHoney: 0, jars: 0 }; // 蜂箱：有幾個、幾個存著蜂蜜、共幾罐
     const machines = {}; // 機器代號 → { total, working, output（有成品等著收的台數）}
     // 動物：餓了幾隻、需要多少飼料、倉庫有多少；長大待出貨的肉用動物；產物型剩幾輪壽命
     const animals = { total: 0, hungry: 0, producersWithProduct: 0, meatReadyToShip: 0, lastCycles: 0, feedNeed: {}, feedStock: {} };
@@ -1243,6 +1328,12 @@
         trees.total += 1;
         if (treeReady(T, CFG)) trees.ripe += 1;
         if (T.pest) trees.pest += 1;
+      }
+      if (isHive(T, CFG)) {
+        const jars = honeyStored(T);
+        hives.total += 1;
+        if (jars > 0) hives.withHoney += 1;
+        hives.jars += jars;
       }
       if (T && T.t === 'machine') {
         const m = machines[T.id] || (machines[T.id] = { total: 0, working: 0, output: 0 });
@@ -1309,6 +1400,7 @@
       ground,
       trees,
       pools,
+      hives,
       machines,
       animals,
       autoBuyFeedSetting: !!(S.settings && S.settings.autoBuyFeed),
@@ -1342,7 +1434,8 @@
     const summary = G.api
       ? '診斷：成熟 ' + G.tiles.ripe + '｜空田 ' + G.tiles.empty + '｜生長中 ' + G.tiles.growing +
         '｜倉庫 ' + G.storage.used + '/' + G.storage.cap + '｜金幣 ' + G.coins + '｜雨水 ' + G.rainWater +
-        '\n動物：' + G.animals.total + ' 隻｜餓了 ' + G.animals.hungry + '｜長大待出貨 ' + G.animals.meatReadyToShip
+        '\n動物：' + G.animals.total + ' 隻｜餓了 ' + G.animals.hungry + '｜長大待出貨 ' + G.animals.meatReadyToShip +
+        '｜蜂蜜 ' + G.hives.jars + ' 罐'
       : '診斷：遊戲介面還沒載入';
 
     if (navigator.clipboard && navigator.clipboard.writeText) {

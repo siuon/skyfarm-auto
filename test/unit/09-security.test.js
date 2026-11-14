@@ -108,12 +108,15 @@ test('釘住的使用者決定：預設值', () => {
   // 預設開啟的自動功能
   for (const k of ['autoHarvest', 'autoPlant', 'autoSell', 'autoPickPoop', 'autoCollectAnimalProducts', 'autoFeedAnimals',
     'autoClearDebris', 'autoClearWeeds', 'autoStraighten', 'autoHarvestTrees', 'autoHarvestFish', 'autoCollectMachines',
-    'autoCatchPests', 'catchPestsOnOtherCrops', 'autoWater', 'sellWhenCantPlant']) {
+    'autoCatchPests', 'catchPestsOnOtherCrops', 'autoWater', 'sellWhenCantPlant',
+    // 2026-11-14 使用者要求：作物、動物、果樹、任何成熟可以點的，都一併收成
+    'autoHarvestMeatAnimals', 'autoCollectHoney', 'harvestOtherCrops']) {
     assert.equal(C[k], true, k + ' 預設開啟');
   }
+  assert.equal(C.otherCropsKeepFree, 10, '其他作物不會自動賣，收完要保留空位給設定作物');
   // 使用者決定維持關閉的（會動用資源）
   for (const k of ['autoWaterTrees', 'autoFeedFish', 'autoLoadMachines']) assert.equal(C[k], false, k + ' 使用者決定先維持關閉');
-  assert.equal(C.handleOtherCrops, false, '只處理設定的作物');
+  assert.equal(C.handleOtherCrops, false, '其他作物只收成，不澆水（handleOtherCrops 才會也澆水）');
   // 使用者決定開啟的補買飼料，與它的保護
   assert.equal(C.buyFeedWhenShort, true);
   assert.equal(C.minCoinsAfterBuyFeed, 100);

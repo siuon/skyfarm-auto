@@ -115,7 +115,24 @@ test('設定 animals：類型只有 producer／meat；餵食與產物欄位齊�
       assert.ok(isNum(a.lifespanCycles), id + '.lifespanCycles');
     }
   }
-  assert.ok(Object.values(CFG.animals).some((a) => a.type === 'meat'), '遊戲裡有肉用動物（「絕不碰」的測試才有意義）');
+  assert.ok(Object.values(CFG.animals).some((a) => a.type === 'meat'), '遊戲裡有肉用動物（出貨的測試才有意義）');
+  for (const [id, a] of Object.entries(CFG.animals)) {
+    if (a.type === 'meat') assert.ok(CFG.items[a.productItem], id + ' 出貨的肉要是倉庫物品：' + a.productItem);
+  }
+});
+
+test('設定 rules：長大的肉用動物放著 2 天會死（所以不收就是損失）', () => {
+  assert.ok(isNum(CFG.rules.meatAdultLifespanSeconds) && CFG.rules.meatAdultLifespanSeconds > 0);
+});
+
+test('設定 devices 與 bees：蜂箱是 kind=hive 的設備，蜂蜜品項存在於物品表', () => {
+  const hives = Object.entries(CFG.devices).filter(([, d]) => d.kind === 'hive');
+  assert.ok(hives.length >= 1, '至少有一種蜂箱（腳本靠 kind === hive 認蜂箱）');
+  assert.ok(CFG.devices.beehive && CFG.devices.beehive.kind === 'hive');
+  assert.equal(CFG.bees.collectTool, 'hand', '蜂蜜用收成（hand）工具收');
+  assert.ok(isNum(CFG.bees.storeMax) && CFG.bees.storeMax > 0);
+  assert.ok(CFG.items[CFG.bees.wildHoney], '野蜂蜜要是倉庫物品：' + CFG.bees.wildHoney);
+  assert.ok(CFG.items.honey_rose, '花蜜品項（honey_*）存在');
 });
 
 test('設定 fish 與 fishPool：長大階段、餵食量、連通加成', () => {

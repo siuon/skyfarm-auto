@@ -51,6 +51,25 @@ module.exports = {
     { name: '機器小選單的按鈕（投放材料／收成／產出效能／升級）與灰掉的樣式', game: ['data-m61', 'off61', 'function machineMenu61'] },
     { name: '餓了的雞鴨點下去先跳小選單（要按餵食）', game: ['data-ck248', 'function ckHungry248'] },
     { name: '魚池用播種工具直接 tapPool、收成工具跳小選單', game: ['function tapPool', 'data-p56'] },
+    {
+      name: '蜂箱：收成工具點有蜂蜜的蜂箱整箱收進倉庫，沒有蜂蜜才開蜂箱面板',
+      game: [
+        "const isHive = T => T && T.t === 'device' && DEV[T.id] && DEV[T.id].kind === 'hive';",
+        'const honeyStored = T => Object.values(T.honey || {}).reduce((a, b) => a + b, 0);',
+        "if (tool === 'hand' && isHive(T)){ if (!collectHoney(T, cx, cy)) openHive(M, k, T);",
+        'deliver(goods, cx, cy, () => { T.honey = {}; sfx(\'harvest\'); });',
+      ],
+    },
+    {
+      name: '長大了的肉用動物：點一下 1 份肉進倉庫、動物消失；長大判斷是 stage >= growStages',
+      game: [
+        'const isAdult = (T,A) => T.stage >= A.growStages;',
+        "if (A.type === 'meat' && isAdult(T,A)){",
+        'deliver([{ id: A.productItem, qty: 1 }], cx, cy, () => { if (M.tiles[k] === T) delete M.tiles[k];',
+        'R.meatAdultLifespanSeconds',
+      ],
+    },
+    { name: '收成放不下時一律走 deliver（跳「農產倉庫滿了」）', game: ['function deliver(goods, x, y, finalize, label)', 'openFullPrompt(goods, free'] },
     { name: '餵食條件 canFeed 與自動買飼料設定', game: ['function canFeed', 'autoBuyFeed'] },
     { name: '倉庫批次賣出介面（勾選框、結帳列、確認視窗預設全數賣出）', game: ['function decorate259', 'function openBatch259', 'bs259'] },
     { name: '收成放不下時跳「農產倉庫滿了」視窗', game: ['農產倉庫滿了'] },

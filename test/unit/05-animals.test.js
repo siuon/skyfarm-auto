@@ -1,5 +1,5 @@
 'use strict';
-// 動物：收產物、動物走離家、肉用動物絕不碰、餵食（只用庫存／補買的條件與底線）。
+// 動物：收產物、動物走離家、肉用動物（長大才出貨）、餵食（只用庫存／補買的條件與底線）。
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { boot, step } = require('../helpers/boot');
@@ -66,25 +66,63 @@ test('收產物時遊戲順便餵下一輪：有飼料就餵、沒有就停在�
   assert.equal(ctx.world.S.inv.egg, 2, '兩隻的蛋都收了');
 });
 
-// ───── 肉用動物絕不碰 ─────
+// ───── 肉用動物：長大了才出貨，沒長大絕不點 ─────
 
-test('肉用動物長大後：任何情況都不點（點下去就是宰掉出貨）', async () => {
-  const ctx = boot({
-    tiles: { '0,9': broiler(), '1,9': broiler({ stage: 3 }), '2,9': broiler({ stage: 3, stack: 5 }) },
-    inv: { corn_cake: 99 }, coins: 99999,
-  }, { flags: { buyFeedWhenShort: true } });
-  await run(ctx, 8);
-  assert.equal(ctx.world.slaughtered.length, 0, '一隻都沒被宰');
-  assert.equal(ctx.world.acts.filter((a) => a.id === 'broiler').length, 0, '連點都沒點');
-  assert.equal(Object.keys(ctx.world.M.tiles).length, 3);
+test('長大了的肉用動物：出貨（1 份肉進倉庫、動物消失）；標籤統計為出貨；不是餵食', async () => {
+  const ctx = boot({ tiles: { '0,9': broiler(), '1,9': broiler({ stage: 3 }) }, inv: { corn_cake: 20 } });
+  await run(ctx, 6);
+  assert.deepEqual([...ctx.world.shipped].sort(), ['0,9', '1,9']);
+  assert.equal(ctx.world.S.inv.chicken_meat, 2);
+  assert.equal(Object.keys(ctx.world.M.tiles).length, 0, '兩隻都出貨了');
+  assert.equal(ctx.t.stats.meat, 2);
+  assert.equal(ctx.world.S.inv.corn_cake, 20, '長大了不餵飼料');
+  assert.equal(actsOn(ctx.world, '0,9')[0].tool, 'hand');
 });
 
-test('肉用動物長大後：就算資料帶著剩餘輪數（cycles>0）也不算餓、不點', async () => {
-  const ctx = boot({ tiles: { '0,9': broiler({ cycles: 5 }), '1,9': broiler({ cycles: 5, stage: 3 }) }, inv: { corn_cake: 99 }, coins: 9999 }, { flags: { buyFeedWhenShort: true } });
-  assert.equal(ctx.t.describeGame().animals.hungry, 0, '診斷也不把它們當成餓了');
+test('長大了的肉用動物：就算帶著產物數或剩餘輪數也只當成出貨，不算餓、不餵', async () => {
+  const ctx = boot({ tiles: { '0,9': broiler({ cycles: 5, stack: 4 }) }, inv: { corn_cake: 99 }, coins: 9999 }, { flags: { buyFeedWhenShort: true } });
+  assert.equal(ctx.t.describeGame().animals.hungry, 0, '診斷不把它當成餓了');
+  assert.equal(ctx.t.describeGame().animals.meatReadyToShip, 1);
+  await run(ctx, 4);
+  assert.equal(ctx.world.shipped.length, 1);
+  assert.equal(ctx.world.S.inv.corn_cake, 99);
+  assert.equal(ctx.world.boughtFeed, 0);
+});
+
+test('autoHarvestMeatAnimals 關掉：長大了的肉用動物完全不點（牠 2 天後會自己死，這是使用者的選擇）', async () => {
+  const ctx = boot({ tiles: { '0,9': broiler() }, inv: { corn_cake: 99 } }, { flags: { autoHarvestMeatAnimals: false } });
   await run(ctx, 6);
-  assert.equal(ctx.world.acts.length, 0, '連點都不點');
-  assert.equal(ctx.world.slaughtered.length, 0);
+  assert.equal(ctx.world.acts.length, 0);
+  assert.equal(ctx.world.shipped.length, 0);
+});
+
+test('肉用動物出貨：倉庫放不下就不點（不跳「倉庫滿了」），標籤說明，標記要賣出', async () => {
+  const ctx = boot({ tiles: { '0,9': broiler() }, cap: 5, inv: { filler: 5 } });
+  ctx.world.CFG.items.filler = { name: '雜物', category: 'material', sellPrice: 0 };
+  await run(ctx, 3);
+  assert.equal(ctx.world.acts.length, 0);
+  assert.equal(ctx.world.fullPrompts, 0);
+  assert.equal(ctx.world.M.tiles['0,9'].t, 'animal', '動物還在');
+  assert.match(ctx.t.status, /倉庫沒空位，暫停收地上的東西、果樹、魚、機器成品、蜂蜜、肉用動物/);
+});
+
+test('肉用動物出貨：走離家的也會補上「剛點了牠」的記號才點得到', async () => {
+  const ctx = boot({ tiles: { '0,9': broiler() }, agents: { '0:0,9': { x: 3.5, y: 11 } } });
+  const marks = spyTapMark(ctx.world);
+  await run(ctx, 3);
+  assert.deepEqual(marks, ['0,9']);
+  assert.equal(ctx.world.shipped.length, 1);
+});
+
+test('肉用動物還沒長大：絕不當成出貨去點（那是餵食階段；沒飼料就不點）', async () => {
+  const ctx = boot({
+    tiles: { '0,9': broiler({ stage: 0 }), '1,9': broiler({ stage: 2 }) },
+    coins: 99999, autoBuyFeed: false, ckIds: [],
+  }, { flags: { buyFeedWhenShort: true } });
+  await run(ctx, 6);
+  assert.equal(ctx.world.shipped.length, 0, '還沒長大的一隻都沒出貨');
+  assert.equal(ctx.world.acts.length, 0, '沒飼料、遊戲又不自動買：連點都不點');
+  assert.equal(Object.keys(ctx.world.M.tiles).length, 2);
 });
 
 test('肉用動物還沒長大：每個成長階段要餵（照一般動物處理）', async () => {
@@ -92,7 +130,7 @@ test('肉用動物還沒長大：每個成長階段要餵（照一般動物處�
   await run(ctx, 3);
   assert.ok(ctx.world.M.tiles['0,9'].timer > 0, '餵了');
   assert.equal(ctx.world.S.inv.corn_cake, 3, '成長階段每次 2 份');
-  assert.equal(ctx.world.slaughtered.length, 0);
+  assert.equal(ctx.world.shipped.length, 0);
 });
 
 // ───── 餵食 ─────
