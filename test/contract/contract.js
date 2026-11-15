@@ -18,6 +18,7 @@ module.exports = {
     { id: 'pick53', game: ["POP53.id = 'pick53'"] }, // 地圖上的小選單
     { id: 'ask47', game: ["box.id = 'ask47'"] }, // 確認視窗
     { id: 'fullCancel', game: ['id="fullCancel"'] }, // 「農產倉庫滿了」的「先不收成」
+    { id: 'status', game: ['id="status"'] }, // 左上狀態列：擴地模式時會放「擴地模式：點虛線區塊購買」
   ],
 
   // 腳本用的選擇器。prefix＝程式碼裡字面值的開頭（有用變數組字的只列到變數之前）
@@ -45,6 +46,15 @@ module.exports = {
     { name: '除錯入口 window.__farm218（CFG、inMap）', game: ['window.__farm218'] },
     { name: '播種／照顧工具切換後要先選一個（none49）', game: ['none49', 'function noSelBlocks49'] },
     { name: '全部隱藏（ui-hide）時點擊會被忽略', game: ["classList.contains('ui-hide')"] },
+    {
+      name: '擴地模式（UI.expand）：狀態列有「擴地模式」標籤；此時點地圖一律當成擴地點擊；切換工具或 Esc 才結束',
+      game: [
+        'if (UI.expand) st.push(`<div class="chip">擴地模式：點虛線區塊購買</div>`);',
+        'if (UI.expand){ tryExpandAt(x, y); return; }',
+        'S.sel.tool = id; UI.expand = false;',
+        "else if (UI.expand){ UI.expand = false; renderHUD(); }",
+      ],
+    },
     { name: '動物走離家時點牠的家無效，要有 lastAnimalTap 記號', game: ['function animalAwayFrom', 'lastAnimalTap', 'lastAnimalTapAt'] },
     { name: '歪掉的裝飾、倒下的柵欄點一下就扶正（任何非移除／收回的工具）', game: ['T.tilt = 0', 'T.fallen = false'] },
     { name: '沿邊柵欄：收成工具先跳「這一格有：」選單', game: ['function objEdgeMenu2543', 'data-oe2543="tile"'] },

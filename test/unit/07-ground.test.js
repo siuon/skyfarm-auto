@@ -55,7 +55,7 @@ test('雜草：拔完倉庫要還剩 weedKeepFree（30）個空位以上，否�
   await run(ctx, 3);
   assert.equal(ctx.world.S.inv.weed, undefined, '30 - 1 = 29 < 30');
   assert.ok(ctx.world.M.tiles['0,0'], '雜草還在地上');
-  assert.match(ctx.t.status, /倉庫空位不多或雜草庫存已滿，暫停拔雜草/);
+  assert.match(ctx.t.status, /倉庫剩 30 格空位（拔雜草要保留 30 格），1 格雜草先不拔/);
 });
 
 test('雜草：倉庫裡的雜草有上限（weedMaxStock 40），草球照數量算', async () => {

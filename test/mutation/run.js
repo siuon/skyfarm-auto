@@ -62,6 +62,10 @@ const MUTATIONS = [
   ['其他作物不再看倉庫是不是滿了', 'canHarvest && room - need', 'room - need'],
   ['harvestOtherCrops 開關不再看', 'CONFIG.autoHarvest && CONFIG.harvestOtherCrops && isRipe(T, CFG)', 'CONFIG.autoHarvest && isRipe(T, CFG)'],
   ['魚池不再收成', 'pools.push([k, \'pool\', pk]);\n            room -= ps.harvestQty;', 'room -= ps.harvestQty;'],
+  ['擴地模式時不再暫停（點擊會被遊戲吞掉）', 'if (isExpandMode()) {', 'if (false) {'],
+  ['擴地模式偵測壞掉（認不出狀態列的標籤）', "String(el.textContent || '').includes('擴地模式')", "String(el.textContent || '').includes('不存在的字')"],
+  ['雜草空位不夠的原因被說成庫存已滿', '} else if (room - n < CONFIG.weedKeepFree) {\n        weedNoRoom += 1;', '} else if (false) {\n        weedNoRoom += 1;'],
+  ['多座島時標籤不再提醒', 'if (S.maps.length > 1) hints.push(', 'if (false) hints.push('],
 ];
 
 const countOf = (text, find) => text.split(find).length - 1;

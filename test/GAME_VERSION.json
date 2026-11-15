@@ -1,7 +1,10 @@
 {
-  "version": "2.66-d78b491fd6",
-  "configVersion": "2.66",
-  "recordedAt": "2026-11-14",
+  "version": "2.67-f45aa956bf",
+  "configVersion": "2.67",
+  "recordedAt": "2026-11-15",
   "note": "契約測試（test/contract）在這個版號的官方檔案上全部通過；單元測試（test/unit）的假遊戲依此版本的行為撰寫。",
-  "previous": null
+  "previous": {
+    "version": "2.66-d78b491fd6",
+    "configVersion": "2.66"
+  }
 }

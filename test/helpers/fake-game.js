@@ -64,6 +64,17 @@ function attachWorld(env, o = {}) {
   pop.hidden = true;
   world.modal = modal; world.modalTitle = modalTitle; world.pop = pop; world.storageBtn = storageBtn;
 
+  // 左上的狀態列（#status）：擴地模式開著時，遊戲會在這裡放一個「擴地模式：點虛線區塊購買」的標籤
+  const statusBar = doc.register('status', new FakeEl(doc, 'div'));
+  world.statusBar = statusBar;
+  world.expand = false; // 遊戲的「擴地模式」（UI.expand）
+  world.expandTaps = 0; // 擴地模式下被遊戲吞掉（當成擴地點擊）的點擊次數
+  world.setExpand = (on) => {
+    world.expand = !!on;
+    statusBar.textContent = on ? '擴地模式：點虛線區塊購買' : '';
+  };
+  if (o.expand) world.setExpand(true);
+
   // 工具列與下方的選項列
   const toolBtn = {};
   for (const id of ['hand', 'seed', 'water', 'care']) {
@@ -72,6 +83,7 @@ function attachWorld(env, o = {}) {
     b.onclick = () => {
       if (ITEM_TOOLS.includes(id) && id !== S.sel.tool) S.sel.none49 = true;
       S.sel.tool = id;
+      world.setExpand(false); // 遊戲：切換工具就會結束擴地模式
     };
     doc.q1('#dock .tool[data-tool="' + id + '"]', b);
     toolBtn[id] = b;
@@ -323,6 +335,7 @@ function attachWorld(env, o = {}) {
     const k = x + ',' + y, T = M.tiles[k];
     world.acts.push({ k, tool: S.sel.tool, care: S.sel.care, none49: S.sel.none49, type: T && T.t, id: T && T.id });
     if (doc.body.classList.contains('ui-hide')) return;
+    if (world.expand) { world.expandTaps += 1; return; } // 擴地模式：點地圖一律當成「點虛線區塊擴地」，已有的格子什麼都不會發生
     if (T && T.t === 'animal') {
       const ag = RT.agents[S.cur + ':' + k];
       const near = !ag || Math.hypot(ag.x - x, ag.y - y) <= 0.55;
