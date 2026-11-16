@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         SkyFarm Auto 載入器（GitHub 版）
 // @namespace    skyfarm-auto.github
-// @version      0.12.1
+// @version      0.12.2
 // @description  從 GitHub 載入浮島農場 SkyFarm 遊戲輔助；有 SHA-256 校驗，檔案內容和下面的雜湊不符就拒絕載入
 // @match        https://phoenixruby.github.io/skyfarm/*
-// @require      https://raw.githubusercontent.com/siuon/skyfarm-auto/8bba90c460fd320f93a8a3c2813d688480a6f002/skyfarm-auto.js#sha256=9a52a9d037aaf32fcb9623a39c99c1001b2fb10e4caf186b475837f9596d8ec1
+// @require      https://raw.githubusercontent.com/siuon/skyfarm-auto/7f75e29e9f15ffd7ddc495669e36a502e5572c5d/skyfarm-auto.js#sha256=db5f6a0cefbbdf91d5c3199c23e5b7d31f41e6d19af0991081173b6a863abf10
 // @run-at       document-start
 // @noframes
 // @grant        none
