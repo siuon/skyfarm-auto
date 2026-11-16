@@ -171,6 +171,31 @@ test('設定：糞便與雜草的物品代號、捉蟲的選項與次數', () =>
   assert.ok(isNum(CFG.pests.catchTaps) && CFG.pests.catchTaps >= 1);
 });
 
+test('設定 consumables 與 robots：耗材欄位、重型機器人手動換、機器人種類的充電樁都存在', () => {
+  const parts = CFG.consumables.parts;
+  assert.ok(Array.isArray(CFG.consumables.bulkDiscount), '買 5 個 9 折、10 個 8 折（腳本只買 1 個，用不到折扣）');
+  for (const [id, P] of Object.entries(parts)) {
+    assert.equal(typeof P.name, 'string', id);
+    assert.ok(Array.isArray(P.for) && P.for.length > 0, id + '.for');
+    assert.ok(isNum(P.price) && P.price > 0, id + '.price（腳本用它核對面板標的價格）');
+    for (const k of P.for) assert.ok(CFG.robots.kinds[k] || k === 'sweeper_dock', id + ' 的機器人種類要存在：' + k);
+  }
+  for (const id of ['saw_chain', 'drill', 'blade']) assert.equal(parts[id].manualSwap, true, id + ' 遊戲要求手動換（腳本替玩家按「換耗材」）');
+  for (const id of ['wheel', 'propeller', 'roller', 'brush']) assert.ok(!parts[id].manualSwap, id + ' 倉庫有備品遊戲自己換');
+  for (const [k, K] of Object.entries(CFG.robots.kinds)) {
+    assert.equal(typeof K.base, 'string', k + '.base（腳本用它找充電樁）');
+    assert.ok(CFG.buildings[K.base], k + ' 的充電樁要存在：' + K.base);
+  }
+  const heavy = Object.keys(CFG.terrain243.robots.kinds);
+  assert.deepEqual(heavy.sort(), ['grade', 'lumber', 'mine'], '重型機器人種類（面板的「要換耗材」卡片只列這幾種）');
+  for (const k of heavy) assert.equal(CFG.robots.kinds[k].base, 'heavy_charger', k);
+  for (const [id, P] of Object.entries(parts)) {
+    if (P.manualSwap) for (const k of P.for) assert.ok(heavy.includes(k), id + ' 的手動換機器人都要在重型清單裡：' + k);
+  }
+  for (const id of Object.keys(parts)) assert.ok(CFG.items['part_' + id], '耗材的倉庫物品存在：part_' + id);
+  assert.ok(!CFG.items.part_saw_chain.sellPrice, '耗材沒有售價（不會被賣出）');
+});
+
 test('設定：預設白名單與腳本的假設對得上（loadMachineIds、飼料品項）', () => {
   const { load } = require('../helpers/harness');
   const { t } = load();

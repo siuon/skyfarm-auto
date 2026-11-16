@@ -24,6 +24,7 @@ function attachWorld(env, o = {}) {
     sel: Object.assign({ tool: 'hand', seed: 'wheat', care: 'catch', none49: false }, o.sel || {}),
     inv: Object.assign({}, o.inv || {}),
     settings: { autoBuyFeed: o.autoBuyFeed ?? true },
+    fleet: JSON.parse(JSON.stringify(o.fleet || {})), // 機器人：{ 種類: [{ id, tier, on, needPart, wear… }] }
   };
   const RT = { mv: null, agents: Object.assign({}, o.agents || {}), pick53: null, lastAnimalTap: null, lastAnimalTapAt: 0 };
   const M = S.maps[0];
@@ -38,6 +39,9 @@ function attachWorld(env, o = {}) {
     // 「絕不做」計數
     shipped: [], hivePanels: 0, upgrades: 0, chemUsed: 0, deletedWild: 0, boughtFeed: 0, coinsSpentOnFeed: 0,
     toasts: [],
+    // 機器人面板
+    unitPanels: 0, swaps: 0, partBuys: [], partCoinsSpent: 0,
+    askShown: 0, askCancelled: 0, askLog: [], // 購買確認視窗：跳出幾次、按了取消幾次、每次的標題與價格
   };
 
   // ───── 倉庫 ─────
@@ -263,6 +267,7 @@ function attachWorld(env, o = {}) {
       showPopup([['button[data-oe2543="tile"]', mkBtn('oe2543', 'tile', () => { world.efSkip = true; try { actCore(x, y); } finally { world.efSkip = false; } })]], k);
       return;
     }
+    if (T && T.t === 'building' && !['store', 'remove'].includes(tool)) { openUnitPanel(T.id); return; }
     if (tool === 'care') { // 照顧工具
       if (T && T.t === 'soil' && T.crop) {
         if (S.sel.care === 'catch') {
@@ -347,6 +352,100 @@ function attachWorld(env, o = {}) {
   }
   world.act = act;
 
+  // ───── 機器人充電樁面板（官方 openUnitPanel：重型機器人的「要換耗材」卡片＋「耗材」卡片）─────
+  const PARTS = () => (CFG.consumables && CFG.consumables.parts) || {};
+  const heavyKinds = () => Object.keys((CFG.terrain243 && CFG.terrain243.robots && CFG.terrain243.robots.kinds) || {});
+  const needOf = (base) => heavyKinds()
+    .filter((k) => CFG.robots.kinds[k] && CFG.robots.kinds[k].base === base)
+    .flatMap((k) => (S.fleet[k] || []).filter((u) => u.tier >= 0 && u.needPart).map((u) => ({ k, u })));
+  // 官方 buyAsk47：任何會花金幣的按鈕按下去，先跳「確定要買嗎？」（#ask47），按「確定購買」才真的買。
+  // 玩家勾過「以後不再詢問」（o.noAsk）就不會跳。o.askTitle／o.askPrice 讓測試模擬「視窗內容和預期不同」。
+  const ASK_SELS = ['#ask47 h3', '#ask47 .tot47', '#ask47 #ask47y', '#ask47 #ask47c', '#ask47 #ask47no', '#ask47 .bs259'];
+  function closeAsk47() { doc.byId.delete('ask47'); for (const sel of ASK_SELS) doc.q1(sel, null); }
+  function askBuy(title, price, onOk) {
+    if (o.noAsk) { onOk(); return; }
+    world.askShown += 1;
+    world.askLog.push([title, price]);
+    doc.register('ask47', new FakeEl(doc, 'div'));
+    const h3 = new FakeEl(doc, 'h3'); h3.textContent = o.askTitle ?? title;
+    const tot = new FakeEl(doc, 'div'); tot.textContent = '價格' + (o.askPrice ?? price).toLocaleString('en-US');
+    const yes = new FakeEl(doc, 'button'); yes.textContent = '確定購買'; yes.disabled = S.player.coins < price;
+    const no = new FakeEl(doc, 'button'); no.textContent = '取消';
+    const chk = new FakeEl(doc, 'input'); chk.checked = !!o.askNoAskChecked;
+    yes.onclick = () => { closeAsk47(); onOk(); };
+    no.onclick = () => { closeAsk47(); world.askCancelled += 1; };
+    doc.q1('#ask47 h3', h3); doc.q1('#ask47 .tot47', tot); doc.q1('#ask47 #ask47y', yes); doc.q1('#ask47 #ask47c', no); doc.q1('#ask47 #ask47no', chk);
+    if (o.askBs259) doc.q1('#ask47 .bs259', new FakeEl(doc, 'div')); // 模擬：跳出的其實是賣出確認視窗
+    world.askYes = yes; world.askNo = no; world.askNoAskBox = chk;
+  }
+  // 官方 stepPartsAutoFit：倉庫有備品就替「不是手動換」的機器人自動換上（重型機器人不會）
+  function fitPartsNow() {
+    for (const kind of Object.keys(S.fleet)) {
+      for (const u of S.fleet[kind]) {
+        if (!u.needPart || (PARTS()[u.needPart] || {}).manualSwap) continue;
+        if (take('part_' + u.needPart, 1)) { u.needPart = null; u.wear = {}; }
+      }
+    }
+  }
+  world.fitPartsNow = fitPartsNow;
+  function clearUnitPanel() {
+    for (const m of [doc._q1, doc._qa]) for (const key of Array.from(m.keys())) if (key.startsWith('#modalBody .sw84') || key.startsWith('#modalBody .partcard')) m.delete(key);
+  }
+  function openUnitPanel(base) {
+    world.unitPanels += 1;
+    if (o.noUnitPanel) return;
+    modal.hidden = false;
+    modalTitle.textContent = (CFG.buildings[base] || {}).name || base;
+    renderUnitPanel(base);
+  }
+  function renderUnitPanel(base) {
+    clearUnitPanel();
+    const need = needOf(base);
+    if (need.length) {
+      const box = new FakeEl(doc, 'div');
+      box.classList.add('sw84');
+      const btns = need.map(({ u }, i) => {
+        const P = PARTS()[u.needPart];
+        const b = new FakeEl(doc, 'button');
+        b.dataset.sw84 = String(i);
+        b.textContent = (S.inv['part_' + u.needPart] || 0) > 0 ? '換耗材' : '買 1 個並換上（' + P.price.toLocaleString('en-US') + '）';
+        const fix = () => { u.needPart = null; u.wear = {}; world.swaps += 1; renderUnitPanel(base); };
+        b.onclick = () => { // 官方 swapPart84：有備品就用備品（免費、不問），沒有就買 1 個（先跳確認視窗）再換上
+          if ((S.inv['part_' + u.needPart] || 0) > 0) { take('part_' + u.needPart, 1); fix(); return; }
+          if (S.player.coins < P.price) { world.toasts.push('金幣不夠'); return; }
+          askBuy(b.textContent, P.price, () => {
+            S.player.coins -= P.price; world.partCoinsSpent += P.price; world.partBuys.push(u.needPart);
+            fix();
+          });
+        };
+        return b;
+      });
+      doc.q1('#modalBody .sw84', box);
+      doc.q('#modalBody .sw84 button[data-sw84]', btns);
+    }
+    // 「耗材」卡片：這種充電樁的機器人用到的耗材，各有「買 1／5／10」
+    const kinds = Object.keys(CFG.robots.kinds).filter((k) => CFG.robots.kinds[k].base === base);
+    const ids = Object.keys(PARTS()).filter((id) => PARTS()[id].for.some((k) => kinds.includes(k)));
+    if (ids.length) {
+      doc.q1('#modalBody .partcard', new FakeEl(doc, 'div'));
+      for (const id of ids) {
+        for (const q of [1, 5, 10]) {
+          const b = new FakeEl(doc, 'button');
+          b.dataset.part = id; b.dataset.q = String(q);
+          b.onclick = () => { // 官方 buyParts：花金幣（5 個 9 折、10 個 8 折）、進倉庫，並立刻替等耗材的機器人換上
+            const d = q >= 10 ? 0.8 : q >= 5 ? 0.9 : 1, cost = Math.round(PARTS()[id].price * q * d);
+            if (S.player.coins < cost) { world.toasts.push('金幣不夠'); return; }
+            askBuy(PARTS()[id].name + ' ×' + q, cost, () => {
+              S.player.coins -= cost; world.partCoinsSpent += cost; world.partBuys.push(id + (q > 1 ? '×' + q : ''));
+              add('part_' + id, q); fitPartsNow(); renderUnitPanel(base);
+            });
+          };
+          doc.q1('#modalBody .partcard button[data-part="' + id + '"][data-q="' + q + '"]', b);
+        }
+      }
+    }
+  }
+
   // ───── 倉庫視窗與批次賣出（腳本用 DOM 操作這一段）─────
   const ui = {
     selected: new Set(), confirmMissing: !!o.confirmMissing, noRows: !!o.noRows, opens: 0, sold: [],
@@ -424,7 +523,7 @@ function attachWorld(env, o = {}) {
     doc.q1('#modalBody tr[data-bs259] input.cb259', ui.rows.length ? ui.rows[0].cb : null);
     refreshBar();
   };
-  modalClose.onclick = () => { modal.hidden = true; modalTitle.textContent = ''; };
+  modalClose.onclick = () => { modal.hidden = true; modalTitle.textContent = ''; clearUnitPanel(); };
 
   // ───── 掛到 window（和官方遊戲公開的除錯介面同名）─────
   win.__farm18 = { get S() { return S; }, RT, act: (x, y) => act(x, y) };

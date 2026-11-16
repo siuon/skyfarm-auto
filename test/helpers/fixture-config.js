@@ -55,6 +55,33 @@ function makeCfg() {
       well: { name: '水井', kind: 'well' },
     },
     feedShop: { pasture: 4, corn_cake: 6, fish_feed: 5 },
+    // 機器人與耗材（結構同官方設定；數字與官方一致，方便對照）
+    buildings: {
+      robot_charger: { name: '機器人充電站', size: [1, 1], serves: 'feed' },
+      drone_pad: { name: '無人機停機坪', size: [1, 1], serves: 'water' },
+      heavy_charger: { name: '重型充電樁', size: [1, 1], serves: 'mine' },
+    },
+    robots: {
+      kinds: {
+        water: { name: '澆水無人機', base: 'drone_pad' },
+        feed: { name: '餵食機器人', base: 'robot_charger' },
+        poop: { name: '鏟屎官機器人', base: 'robot_charger' },
+        lumber: { name: '伐木機器人', base: 'heavy_charger' },
+        mine: { name: '採礦機器人', base: 'heavy_charger' },
+        grade: { name: '整地機器人', base: 'heavy_charger' },
+      },
+    },
+    terrain243: { robots: { kinds: { lumber: 'forest', mine: 'mine', grade: 'mound' } } },
+    consumables: {
+      bulkDiscount: [{ qty: 5, rate: 0.9 }, { qty: 10, rate: 0.8 }],
+      parts: {
+        wheel: { name: '輪子', for: ['feed', 'poop'], lifeWorkHours: 240, price: 50 },
+        propeller: { name: '螺旋槳', for: ['water'], lifeWorkHours: 200, price: 60 },
+        saw_chain: { name: '鋸鏈', for: ['lumber'], lifeWorkHours: 20, price: 150, manualSwap: true },
+        drill: { name: '鑽頭', for: ['mine'], lifeWorkHours: 20, price: 250, manualSwap: true },
+        blade: { name: '鏟刃', for: ['grade'], lifeWorkHours: 30, price: 100, manualSwap: true },
+      },
+    },
     items: {
       wheat: { name: '小麥', category: 'crop', sellPrice: 15 },
       org_wheat: { name: '有機小麥', category: 'crop', sellPrice: 21 },
@@ -71,6 +98,12 @@ function makeCfg() {
       chicken_meat: { name: '雞肉', category: 'meat', sellPrice: 220 },
       poop: { name: '糞便', category: 'material', sellPrice: 0 },
       weed: { name: '雜草', category: 'material', sellPrice: 1 },
+      // 耗材在官方倉庫的「耗材」分類，沒有售價（不能賣）
+      part_wheel: { name: '輪子', category: 'part' },
+      part_propeller: { name: '螺旋槳', category: 'part' },
+      part_saw_chain: { name: '鋸鏈', category: 'part' },
+      part_drill: { name: '鑽頭', category: 'part' },
+      part_blade: { name: '鏟刃', category: 'part' },
       organic_fert: { name: '有機肥', category: 'material', sellPrice: 5 },
       orange: { name: '柳丁', category: 'fruit', sellPrice: 40 },
       tilapia: { name: '吳郭魚', category: 'fish', sellPrice: 25 },

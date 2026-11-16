@@ -3,7 +3,7 @@
  *
  * 由 Tampermonkey 透過 @require 載入（設定見 skyfarm-auto.loader.user.js）。
  *
- * 功能（0.12.2）：
+ * 功能（0.13.0）：
  *   - Alt+Shift+S：跳出輸入框，輸入「這次要自動種植的作物」（中文名稱或代號皆可）
  *   - Alt+Shift+A：開啟／關閉自動功能（每次載入頁面一律預設 OFF，不會記住 ON）；
  *                  還沒設定作物就按開啟時，會先跳出輸入框，確認後才開始
@@ -37,6 +37,13 @@
  *          （都只在倉庫放得下時才收。補魚苗、升級機器一律不碰。）
  *       9. 田裡不是設定作物的作物：成熟了也收成（CONFIG.harvestOtherCrops；只收、不澆水、不賣，
  *          倉庫要放得下、收完還剩 CONFIG.otherCropsKeepFree 個空位才收，免得擠掉設定作物的位置）。
+ *      10. 機器人耗材磨完（鋸鏈、鑽頭、鏟刃、輪子、螺旋槳、滾筒、清潔刷）→ 到那種機器人的充電樁面板替它換上
+ *          （CONFIG.autoSwapParts）。伐木／採礦／整地機器人遊戲規定要手動換，倉庫有備品也不會自動換，這裡替你按「換耗材」；
+ *          倉庫沒備品時，CONFIG.buyPartsWhenShort 開著、買完金幣還有 CONFIG.minCoinsAfterBuyParts 以上，就買 1 個再換
+ *          （照商店單價，會花金幣；面板標的價格和遊戲設定不一致就不買）。花金幣的按鈕按下去，遊戲會先跳「確定要買嗎？」
+ *          確認視窗，腳本核對買的東西、數量、價格都和預期一樣、買完金幣還夠，才按「確定購買」，對不上就按「取消」；
+ *          絕不勾「以後不再詢問」（那會改你的遊戲設定）。一次最多買 4 個。面板是用「收成」工具點充電樁開的，做完一定關掉，
+ *          只能換有充電樁的這座島的畫面；絕不碰「買機器人」「升級」等其他按鈕。
  *       以下三項會用到你的資源，預設關閉，要用請改 CONFIG：
  *          autoWaterTrees（果樹也澆雨水）、autoFeedFish（用倉庫現有的飼料餵魚，不會自動買）、
  *          autoLoadMachines（機器自動投料，只投 loadMachineIds 裡的機器，成品庫存有上限）
@@ -67,7 +74,7 @@
   'use strict';
 
   const NAME = 'SkyFarmAuto';
-  const VERSION = '0.12.2';
+  const VERSION = '0.13.0';
   const BADGE_ID = 'skyfarm-auto-badge';
   const PANEL_ID = 'skyfarm-auto-panel';
 
@@ -118,6 +125,11 @@
     sellWhenCantPlant: true, // 有空田、但金幣不夠買種子時，直接賣掉倉庫裡設定的作物換錢，不等倉庫快滿
     sellWhenFreeAtMost: 5, // 倉庫剩餘空位 ≤ 此值就開始賣出（只賣設定的作物與它的有機版）
     sellRetryMs: 30000, // 賣不出東西時，隔多久才再試一次
+
+    autoSwapParts: true, // 機器人的耗材磨完時，到充電樁面板替它換上（伐木／採礦／整地機器人遊戲規定要手動換；有備品才換，免費）
+    buyPartsWhenShort: true, // 倉庫沒備品時，花金幣買 1 個再換上（照遊戲商店單價；買完金幣要 ≥ minCoinsAfterBuyParts）
+    minCoinsAfterBuyParts: 100, // 買耗材後至少要剩多少金幣（只有開了 buyPartsWhenShort 才用到）
+    partsRetryMs: 60000, // 換耗材沒成功（沒備品、金幣不夠、這座島沒有充電樁…）時，隔多久才再試一次
   };
 
   // 避免被重複注入
@@ -157,7 +169,7 @@
 
   const newStats = () => ({
     harvest: 0, plant: 0, water: 0, pest: 0, pick: 0, sellRuns: 0,
-    clean: 0, fruit: 0, fish: 0, machine: 0, feed: 0, honey: 0, meat: 0,
+    clean: 0, fruit: 0, fish: 0, machine: 0, feed: 0, honey: 0, meat: 0, parts: 0,
   });
   let stats = newStats();
   const wetting = new Set(); // 正在澆到目標濕度的格子（避免在門檻附近來回澆）
@@ -166,6 +178,9 @@
   let needSell = false; // 曾被「倉庫滿了」視窗擋住，或金幣不夠買種子，下個週期優先賣出
   let sellBlockedUntil = 0; // 賣不出東西時的暫停時間
   const cooldown = new Map(); // 格子座標 → { kind, until, fails }，避免對同一格狂點
+  const partsBlocked = new Map(); // 充電樁種類 → 換耗材沒成功時，暫停到什麼時候再試
+  const partsWhy = new Map(); // 充電樁種類 → 還沒換成的原因（寫在右下角標籤上）
+  let partsHint = '';
 
   // ───────────────────────── 遊戲介面 ─────────────────────────
 
@@ -439,6 +454,232 @@
     const btn = document.querySelector('#dock .tool[data-tool="' + id + '"]');
     if (btn) btn.click();
     return false;
+  }
+
+  // ───────────────────────── 機器人耗材 ─────────────────────────
+  //
+  // 機器人的耗材（鋸鏈、鑽頭、鏟刃、輪子、螺旋槳、滾筒、清潔刷）磨完就停工，頭上顯示「換耗材」：
+  //   - 伐木／採礦／整地機器人（重型充電樁）：遊戲規定要在充電樁面板按「換耗材」才換，倉庫有備品也不自動換、不自動買
+  //     （面板按鈕：倉庫有備品寫「換耗材」；沒備品寫「買 1 個並換上（價格）」，會花金幣）；
+  //   - 其他機器人：倉庫有備品遊戲會自己換；沒備品就停工，要在面板「耗材」卡片按「買 1」，買了遊戲會自動換上。
+  // 這裡替玩家按那些按鈕：有備品就直接換（免費）；沒備品且 CONFIG.buyPartsWhenShort 開著、買完金幣還有
+  // CONFIG.minCoinsAfterBuyParts 以上，才買 1 個（只買 1 個，不買折扣組）。面板是用「收成」工具點充電樁開的，
+  // 做完一定關掉；絕不碰「買機器人」「升級」等其他按鈕。
+  const partsOf = (CFG) => (CFG && CFG.consumables && CFG.consumables.parts) || {};
+  const partItemId = (id) => 'part_' + id;
+
+  // 現在有哪些機器人在等耗材：{ kind, base（它的充電樁種類）, part, unit, manual（遊戲要求手動換） }
+  function partNeeds(g) {
+    const { S, CFG } = g;
+    const parts = partsOf(CFG);
+    const kinds = (CFG.robots && CFG.robots.kinds) || {};
+    const out = [];
+    for (const kind of Object.keys(S.fleet || {})) {
+      const K = kinds[kind];
+      if (!K || !K.base || !Array.isArray(S.fleet[kind])) continue;
+      for (const u of S.fleet[kind]) {
+        if (!u || !(u.tier >= 0) || !u.needPart || u.on === false) continue;
+        const P = parts[u.needPart];
+        if (!P) continue;
+        out.push({ kind, base: K.base, part: u.needPart, unit: u, manual: !!P.manualSwap });
+      }
+    }
+    return out;
+  }
+
+  // 重型機器人面板上「換耗材」按鈕的順序＝遊戲的需求清單順序（按鈕的 data-sw84 是它在清單裡的位置）。
+  // 這裡照同樣的規則排一次，才知道每顆按鈕是哪一台、哪種耗材（對不上就不點）。
+  function swapOrder(g, base) {
+    const { S, CFG } = g;
+    const heavy = Object.keys((CFG.terrain243 && CFG.terrain243.robots && CFG.terrain243.robots.kinds) || {});
+    const kinds = (CFG.robots && CFG.robots.kinds) || {};
+    return heavy
+      .filter((k) => kinds[k] && kinds[k].base === base)
+      .flatMap((k) =>
+        (Array.isArray(S.fleet && S.fleet[k]) ? S.fleet[k] : [])
+          .filter((u) => u && u.tier >= 0 && u.needPart)
+          .map((u) => ({ kind: k, unit: u, part: u.needPart }))
+      );
+  }
+
+  // 下一個要按的按鈕：{ el } 或（沒有可按的）{ why }
+  function nextPartStep(g, base) {
+    const { S, CFG } = g;
+    const parts = partsOf(CFG);
+    const coins = S.player.coins;
+    let why = '';
+    const afford = (id) => {
+      const need = parts[id].price + CONFIG.minCoinsAfterBuyParts;
+      if (CONFIG.buyPartsWhenShort && coins >= need) return true;
+      why = '缺' + parts[id].name + '（倉庫 0 個' + (CONFIG.buyPartsWhenShort ? '，金幣要 ' + need + ' 以上才買' : '，不自動買') + '）';
+      return false;
+    };
+    // 重型機器人：面板上的「換耗材」按鈕
+    const btns = Array.from(document.querySelectorAll('#modalBody .sw84 button[data-sw84]'));
+    const order = swapOrder(g, base);
+    if (btns.length && order.length === btns.length) {
+      for (const b of btns) {
+        const e = order[Number(b.dataset.sw84)];
+        if (!e || e.unit.on === false || !parts[e.part]) continue;
+        const label = String(b.textContent || '').trim();
+        const have = S.inv[partItemId(e.part)] || 0;
+        if (label === '換耗材' && have > 0) return { el: b };
+        if (label.startsWith('買 1 個並換上') && have === 0) {
+          // 會花錢的按鈕：標示的價格要和遊戲設定的單價一致、買完還有足夠金幣，才按
+          const m = /（([\d,]+)）/.exec(label);
+          if (!m || Number(m[1].replace(/,/g, '')) !== parts[e.part].price) {
+            why = parts[e.part].name + '的價格和預期不同，不自動買';
+            continue;
+          }
+          if (afford(e.part)) return { el: b, buy: { part: e.part, price: parts[e.part].price, label } };
+        }
+      }
+    } else if (btns.length) {
+      why = '耗材面板的按鈕和機器人對不上，不自動換';
+    }
+    // 其他機器人：倉庫有備品遊戲自己會換；沒有備品才在「耗材」卡片買 1 個
+    for (const n of partNeeds(g)) {
+      if (n.base !== base || n.manual || (S.inv[partItemId(n.part)] || 0) > 0) continue;
+      if (!afford(n.part)) continue;
+      const b = document.querySelector('#modalBody .partcard button[data-part="' + n.part + '"][data-q="1"]');
+      if (b) return { el: b, buy: { part: n.part, price: parts[n.part].price, label: '' } };
+      why = '面板上找不到「買 1」按鈕：' + parts[n.part].name;
+    }
+    return { why };
+  }
+
+  // 遊戲在任何會花金幣的按鈕按下去之後，會先跳「確定要買嗎？」確認視窗（#ask47），按了「確定購買」才真的買；
+  // 玩家若勾過「以後不再詢問」就不會跳。這裡只在核對過「買的東西、數量、價格」都和預期一樣、金幣也夠時才按「確定購買」，
+  // 對不上就按「取消」；絕不碰「以後不再詢問」的勾選框（那會改玩家的遊戲設定）。
+  // 回傳 { ok, why }；沒有跳視窗（玩家設了不再詢問）時 ok = true，由呼叫端看結果有沒有變。
+  async function confirmPartPurchase(g, buy) {
+    const P = partsOf(g.CFG)[buy.part] || {};
+    const ask = await waitFor(() => document.getElementById('ask47'), 800);
+    if (!ask) return { ok: true };
+    const yes = document.querySelector('#ask47 #ask47y');
+    const no = document.querySelector('#ask47 #ask47c');
+    const clean = (t) => String(t || '').trim().replace(/\s+/g, ' ');
+    const title = clean((document.querySelector('#ask47 h3') || {}).textContent);
+    const m = /價格\s*([\d,]+)/.exec(clean((document.querySelector('#ask47 .tot47') || {}).textContent));
+    const price = m ? Number(m[1].replace(/,/g, '')) : NaN;
+    const noAsk = document.querySelector('#ask47 #ask47no');
+    let why = '';
+    if (document.querySelector('#ask47 .bs259')) why = '跳出的是賣出確認視窗，不按';
+    else if (!yes || yes.disabled || !no) why = '購買確認視窗的按鈕不對（金幣不夠？）';
+    else if (title !== (P.name || '') + ' ×1' && title !== clean(buy.label).slice(0, 40)) why = '購買確認視窗買的東西和預期不同（' + title + '），不按';
+    else if (price !== buy.price) why = '購買確認視窗的價格和預期不同（' + (m ? m[1] : '看不出') + '），不按';
+    else if (g.S.player.coins - price < CONFIG.minCoinsAfterBuyParts) why = '買完金幣會低於 ' + CONFIG.minCoinsAfterBuyParts + '，不按';
+    else if (noAsk && noAsk.checked) why = '「以後不再詢問」被勾起來了，不按';
+    if (why) {
+      if (no) no.click();
+      return { ok: false, why };
+    }
+    yes.click();
+    await sleep(300); // 遊戲關掉視窗後才真的買（並重畫面板）
+    return { ok: true };
+  }
+
+  // 找出下一個要處理的充電樁種類（略過暫停重試中的）；順便整理要寫在標籤上的原因
+  function nextPartsJob(g) {
+    const needs = partNeeds(g);
+    const bases = [...new Set(needs.map((n) => n.base))];
+    for (const b of Array.from(partsWhy.keys())) if (!bases.includes(b)) partsWhy.delete(b);
+    partsHint = bases.map((b) => partsWhy.get(b)).filter(Boolean).join('、');
+    const now = Date.now();
+    const base = bases.find((b) => !(partsBlocked.get(b) > now));
+    return base ? { base, needs: needs.filter((n) => n.base === base) } : null;
+  }
+
+  // 開充電樁面板 → 一個一個按「換耗材」／「買 1」→ 關面板。無論如何結束，只要是我們開的視窗就一定關掉。
+  async function partsFlow(g, job) {
+    const { S, CFG } = g;
+    const { base } = job;
+    const M = S.maps[S.cur];
+    const baseName = ((CFG.buildings || {})[base] || {}).name || base;
+    const before = partNeeds(g).filter((n) => n.base === base).length;
+    let opened = false;
+    let clicked = false; // 這次是否按過面板上的按鈕
+    let buys = 0; // 這次按過幾次會花錢的按鈕
+    let why = '';
+    try {
+      let tile = null;
+      for (const k in (M && M.tiles) || {}) {
+        const T = M.tiles[k];
+        if (T && T.t === 'building' && T.id === base) {
+          tile = k;
+          break;
+        }
+      }
+      if (!tile) {
+        why = '這座島沒有' + baseName + '，換不了耗材（其他島的機器人要切到有' + baseName + '的島）';
+        return;
+      }
+      const [x, y] = tile.split(',').map(Number);
+      g.act(x, y); // 收成工具點充電樁：遊戲開出機器人面板
+      const ready = await waitFor(
+        () => isModalOpen() && (document.querySelector('#modalBody .sw84') || document.querySelector('#modalBody .partcard')),
+        1500
+      );
+      opened = isModalOpen(); // 這個週期開頭沒有任何視窗，現在有的就是我們開的
+      if (!ready) {
+        why = '開不起' + baseName + '面板';
+        return;
+      }
+      for (let round = 0; round < 8; round++) {
+        if (!partNeeds(g).some((n) => n.base === base)) break;
+        const step = nextPartStep(g, base);
+        if (!step.el) {
+          why = step.why;
+          break;
+        }
+        if (step.buy && buys >= 4) {
+          why = '這次已經買了 4 個，先停';
+          break;
+        }
+        clicked = true;
+        step.el.click();
+        if (step.buy) {
+          buys += 1;
+          const r = await confirmPartPurchase(g, step.buy);
+          if (!r.ok) {
+            why = r.why;
+            break;
+          }
+        } else if (document.getElementById('ask47')) {
+          // 免費換耗材不該跳確認視窗；跳了就是狀況不對，按取消、不再繼續
+          const no = document.querySelector('#ask47 #ask47c');
+          if (no) no.click();
+          why = '換耗材跳出了沒預期的確認視窗，已取消';
+          break;
+        }
+        await sleep(250); // 遊戲會重畫面板，下一輪重新找按鈕
+      }
+    } finally {
+      // 我們按了按鈕之後，不能留下沒處理的購買確認視窗（它會讓腳本以為是玩家開的而一直暫停）
+      if (clicked && document.getElementById('ask47')) {
+        const no = document.querySelector('#ask47 #ask47c');
+        if (no) no.click();
+      }
+      const close = $('modalClose');
+      if (opened && isModalOpen() && close) {
+        close.click();
+        await sleep(150);
+      }
+      const left = partNeeds(g).filter((n) => n.base === base).length;
+      if (before > left) {
+        stats.parts += before - left;
+        lastActionAt = Date.now();
+        log('換了 ' + (before - left) + ' 個機器人耗材');
+      }
+      if (left === 0) {
+        partsBlocked.delete(base);
+        partsWhy.delete(base);
+      } else {
+        // 還有沒換成的（沒備品、金幣不夠、找不到按鈕…）：隔一陣子再試，原因寫在標籤上
+        partsBlocked.set(base, Date.now() + CONFIG.partsRetryMs);
+        partsWhy.set(base, why || '耗材還沒換成');
+      }
+    }
   }
 
   // 準備好播種工具與種子。回傳 true 才能收成／播種；回傳 false 代表這個週期只做了準備動作。
@@ -903,6 +1144,7 @@
     }
     // 腳本一次只處理畫面上的這一座島（遊戲的「農場 N」分頁）；其他島的雜草、作物都不會動，標籤提醒一下
     if (S.maps.length > 1) hints.push('共 ' + S.maps.length + ' 座島，只處理畫面上的第 ' + (S.cur + 1) + ' 座');
+    if (partsHint) hints.push('機器人耗材：' + partsHint);
 
     // 一次只用一種工具：抓蟲要「照顧」工具、播種／收成／魚池要「播種」工具、撿東西要「收成」工具、澆水要「澆水」工具。
     // 目前的工具還有事做就繼續用，做完才換，避免每個週期都來回切換；
@@ -1168,6 +1410,22 @@
       return;
     }
 
+    // 機器人耗材磨完了：到充電樁面板換上（有備品免費換；沒備品才在設定允許、金幣夠時買 1 個）
+    if (CONFIG.autoSwapParts) {
+      const job = nextPartsJob(g);
+      if (job) {
+        if (!ensureToolIs(g, 'hand')) {
+          setStatus('切換工具中（換耗材）…');
+          return;
+        }
+        setStatus('機器人換耗材中…');
+        await partsFlow(g, job);
+        return;
+      }
+    } else {
+      partsHint = '';
+    }
+
     doFields(g);
   }
 
@@ -1197,6 +1455,9 @@
       lastActionAt = 0;
       cooldown.clear();
       wetting.clear();
+      partsBlocked.clear();
+      partsWhy.clear();
+      partsHint = '';
       status = '啟動中';
       timer = setInterval(onTick, CONFIG.tickMs);
     } else {
@@ -1324,7 +1585,7 @@
         '果樹 ' + stats.fruit + '｜魚池 ' + stats.fish + '｜機器 ' + stats.machine + '｜雜物 ' + stats.clean +
           '｜餵食 ' + stats.feed
       );
-      lines.push('蜂蜜 ' + stats.honey + '｜出貨 ' + stats.meat);
+      lines.push('蜂蜜 ' + stats.honey + '｜出貨 ' + stats.meat + '｜換耗材 ' + stats.parts);
       // 上一次真的做成事的時間：數字不動、又一直很久以前，就是停住了，看下一行的原因
       lines.push(lastActionAt ? '上次動作：' + fmtSec((Date.now() - lastActionAt) / 1000) + '前' : '開啟後還沒做成任何事');
       if (status) lines.push(status);
@@ -1362,6 +1623,19 @@
       height: c.height,
       rect: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) },
     };
+  }
+
+  // 診斷用：幾台機器人在等耗材（依耗材分）、倉庫裡對應的備品數
+  function robotPartsInfo(g) {
+    const waiting = {};
+    const stock = {};
+    let total = 0;
+    for (const n of partNeeds(g)) {
+      waiting[n.part] = (waiting[n.part] || 0) + 1;
+      stock[n.part] = (g.S.inv && g.S.inv[partItemId(n.part)]) || 0;
+      total += 1;
+    }
+    return { total, waiting, stock };
   }
 
   // 只輸出數量與設定，不輸出任何玩家識別資訊
@@ -1460,6 +1734,7 @@
       weedStock: (S.inv && S.inv.weed) || 0, // 倉庫裡的雜草（賣出設定作物時一併賣掉）
       maps: { total: S.maps.length, current: S.cur + 1 }, // 腳本只處理畫面上的這一座島
       expandMode: isExpandMode(), // 遊戲的擴地模式開著時腳本會暫停
+      robotParts: robotPartsInfo(g), // 等耗材的機器人台數（依耗材分）與倉庫備品
       inventoryByCategory: inv,
       tiles: count,
       ground,
@@ -1502,7 +1777,8 @@
         '\n動物：' + G.animals.total + ' 隻｜餓了 ' + G.animals.hungry + '｜長大待出貨 ' + G.animals.meatReadyToShip +
         '｜蜂蜜 ' + G.hives.jars + ' 罐' +
         '\n雜草：地上 ' + G.ground.weed + '（草球 ' + G.ground.weedball + '）｜倉庫 ' + G.weedStock + ' 個｜空位 ' + G.storage.free + '（拔雜草要留 ' + CONFIG.weedKeepFree + '）' +
-        '\n島 ' + G.maps.current + '/' + G.maps.total + (G.expandMode ? '｜擴地模式中（腳本暫停）' : '')
+        '\n島 ' + G.maps.current + '/' + G.maps.total + (G.expandMode ? '｜擴地模式中（腳本暫停）' : '') +
+        '｜等耗材的機器人 ' + G.robotParts.total + ' 台'
       : '診斷：遊戲介面還沒載入';
 
     if (navigator.clipboard && navigator.clipboard.writeText) {

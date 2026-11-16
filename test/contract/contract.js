@@ -31,12 +31,23 @@ module.exports = {
     { prefix: '#bsbar259 [data-bsgo259]', game: ['bsbar259', 'data-bsgo259'] },
     { prefix: '#ask47 .bs259 #ask47y', game: ['cf47 bs259', 'id="ask47y"'] },
     { prefix: '#ask47 .bs259 #ask47c', game: ['cf47 bs259', 'id="ask47c"'] },
+    // 買耗材時遊戲先跳的「確定要買嗎？」購買確認視窗（沒有 .bs259）；腳本核對標題、價格後才按「確定購買」
+    { prefix: '#ask47 #ask47y', game: ['id="ask47y"'] },
+    { prefix: '#ask47 #ask47c', game: ['id="ask47c"'] },
+    { prefix: '#ask47 #ask47no', game: ['id="ask47no"'] }, // 「以後不再詢問」勾選框：只讀，絕不去勾
+    { prefix: '#ask47 h3', game: ['<h3>${I.title}</h3>'] },
+    { prefix: '#ask47 .tot47', game: ['<div class="tot47"><span>${I.priceLabel || \'價格\'}</span>'] },
+    { prefix: '#ask47 .bs259', game: ['cf47 bs259'] }, // 賣出確認視窗：看到它就不能當成購買確認去按
     { prefix: '#dock .tool[data-tool="', game: ['id="dock"', 'data-tool='] },
     { prefix: '#tray .item[data-id="', game: ['id="tray"', 'data-id='] },
     { prefix: '#tray .item[data-id="catch"]', game: ['id="tray"', 'data-id='] },
     { prefix: 'button[data-oe2543="tile"]', game: ['data-oe2543="tile"'] }, // 「這一格有：」選單
     { prefix: 'button[data-ck248="feed"]', game: ['data-ck248'] }, // 餓了的雞鴨小選單
     { prefix: 'button[data-m61="', game: ['data-m61'] }, // 機器小選單
+    { prefix: '#modalBody .sw84 button[data-sw84]', game: ['sw84', 'data-sw84'] }, // 重型機器人「要換耗材」卡片的按鈕
+    { prefix: '#modalBody .sw84', game: ["box.className = 'pcard span2 sw84'"] },
+    { prefix: '#modalBody .partcard button[data-part="', game: ['data-part="${id}" data-q="${q}"'] }, // 「耗材」卡片的「買 1／5／10」
+    { prefix: '#modalBody .partcard', game: ['pcard span2 partcard'] },
     { prefix: 'canvas', game: [] },
   ],
 
@@ -77,6 +88,44 @@ module.exports = {
         "if (A.type === 'meat' && isAdult(T,A)){",
         'deliver([{ id: A.productItem, qty: 1 }], cx, cy, () => { if (M.tiles[k] === T) delete M.tiles[k];',
         'R.meatAdultLifespanSeconds',
+      ],
+    },
+    {
+      name: '點充電樁（建築）開機器人面板；面板有「耗材」卡片，重型機器人另有「要換耗材」卡片（有備品寫「換耗材」、沒備品寫「買 1 個並換上（價格）」）',
+      game: [
+        'else if (B.serves) openUnitPanel(B.serves);',
+        "have ? '換耗材' : `買 1 個並換上（${fmtN(P.price)}）`",
+        'function swapPart84(kind, u){',
+        'if ((S.inv[partItem(id)] || 0) > 0) return go();',
+        'if (buyParts(id, 1)) return go(); return false; }',
+      ],
+    },
+    {
+      name: '重型機器人（伐木／採礦／整地）耗材磨完要手動換：遊戲不自動換；按鈕順序＝需求清單順序',
+      game: [
+        'const manual84 = id => !!(PARTS[id] && PARTS[id].manualSwap);',
+        'if (u && u.needPart && manual84(u.needPart) && !RT.swap84) return;',
+        'const need = TK84.filter(k => RK(k).base === baseId).flatMap(k => fleet(k).filter(u => unitTier(k, u) && u.needPart)',
+        'const TK84 = Object.keys(RB84.kinds || { lumber: 1, mine: 1, grade: 1 }).filter(k => RB.kinds[k]);',
+      ],
+    },
+    {
+      name: '其他機器人耗材：有備品遊戲自己換、買了立刻換上；機器人狀態在 S.fleet[種類][]（tier、on、needPart）',
+      game: [
+        'function stepPartsAutoFit(){ for (const kind of KINDS) for (const u of fleet(kind)) if (u.needPart) fitPart(kind, u);',
+        'function buyParts(id, q){ const cost = partPrice(id, q); if (!spend(cost)) return false; invAdd(partItem(id), q);',
+        'function fleet(kind){ S.fleet = S.fleet || {}; return (S.fleet[kind] = S.fleet[kind] || []); }',
+        'const unitTier = (kind, u) => u && u.tier >= 0 ? RK(kind).tiers[u.tier] : null;',
+        'u.needPart = id;',
+      ],
+    },
+    {
+      name: '花金幣的按鈕（買耗材等）先跳「確定要買嗎？」確認視窗；「不再詢問」是玩家設定；耗材的確認標題是「名稱 ×數量」',
+      game: [
+        'function buyAsk47(I, onOk){',
+        "const noAsk47 = cat => !!(window.__noAsk47 || (S && S.settings && S.settings.noAsk && S.settings.noAsk[cat]));",
+        "if (d.part && PARTS[d.part]){ const q = +d.q || 1; return { cat: 'shop', title: `${PARTS[d.part].name} ×${q}`, price,",
+        "const t = (b.querySelector('b') || b).textContent.trim().replace(/\\s+/g, ' ').slice(0, 40);",
       ],
     },
     { name: '收成放不下時一律走 deliver（跳「農產倉庫滿了」）', game: ['function deliver(goods, x, y, finalize, label)', 'openFullPrompt(goods, free'] },
