@@ -3,7 +3,7 @@
  *
  * 由 Tampermonkey 透過 @require 載入（設定見 skyfarm-auto.loader.user.js）。
  *
- * 功能（0.12.1）：
+ * 功能（0.12.2）：
  *   - Alt+Shift+S：跳出輸入框，輸入「這次要自動種植的作物」（中文名稱或代號皆可）
  *   - Alt+Shift+A：開啟／關閉自動功能（每次載入頁面一律預設 OFF，不會記住 ON）；
  *                  還沒設定作物就按開啟時，會先跳出輸入框，確認後才開始
@@ -27,10 +27,9 @@
  *          CONFIG.minCoinsAfterBuyFeed，才會用金幣照商店價補買（CONFIG.buyFeedWhenShort）。
  *       7. 被風吹歪的裝飾、倒下的柵欄 → 扶正（免費；用「澆水」工具點，不會用到水）。
  *          地上的雜物：碎石等垃圾直接撿掉（不佔倉庫）；雜草、草球拔掉會收進倉庫，
- *          只有拔完倉庫還剩 CONFIG.weedKeepFree 個空位以上、而且倉庫裡的雜草不超過 CONFIG.weedMaxStock 個才拔
- *          （雜草不值錢也不會自動賣，不能擠掉作物的位置；超過就留在地上）。
- *          雜草沒拔時，右下角標籤會寫是哪一種原因（「倉庫剩 N 格空位」或「倉庫裡已有 N 個雜草」）與數字。
- *          倉庫裡的雜草到上限後不會自動變少（不賣、堆肥桶預設不自動投料），要自己賣掉／做堆肥，或調高 weedMaxStock。
+ *          只有拔完倉庫還剩 CONFIG.weedKeepFree 個空位以上才拔（雜草不值錢，不能擠掉作物的位置；空位不夠就留在地上）。
+ *          倉庫裡的雜草沒有數量上限；賣出設定作物時會一併把倉庫裡的雜草賣掉（1 金幣一個，CONFIG.sellWeedsWithCrops）。
+ *          雜草沒拔時，右下角標籤會寫剩幾格空位、要保留幾格。
  *          遊戲在「擴地模式」時所有點擊都被當成擴地，所以腳本偵測到就暫停（結束擴地模式才繼續）。
  *          腳本一次只處理畫面上的這一座島（有開第 2 座以上的島時，標籤會提醒）。
  *       8. 果樹結果了 → 採收；有蟲 → 抓蟲。魚池有魚長成了 → 收成；機器做好了 → 收成品；
@@ -68,7 +67,7 @@
   'use strict';
 
   const NAME = 'SkyFarmAuto';
-  const VERSION = '0.12.1';
+  const VERSION = '0.12.2';
   const BADGE_ID = 'skyfarm-auto-badge';
   const PANEL_ID = 'skyfarm-auto-panel';
 
@@ -96,7 +95,7 @@
     autoClearDebris: true, // 地上的碎石等垃圾自動撿掉（不佔倉庫、免費）
     autoClearWeeds: true, // 地上的雜草、草球自動拔掉（會收進倉庫，空位不夠就暫停）
     weedKeepFree: 30, // 拔雜草後倉庫至少要還剩這麼多空位，雜草不值錢，不能擠掉作物、蛋、奶的位置
-    weedMaxStock: 40, // 倉庫裡的雜草最多放這麼多（不會自動賣；堆肥桶會用掉），滿了就不拔，雜草留在地上
+    sellWeedsWithCrops: true, // 賣出設定的作物時，倉庫裡的雜草（1 金幣一個）也一併賣掉；雜草在倉庫裡沒有數量上限
     autoHarvestTrees: true, // 果樹結果了自動採收（倉庫放得下才收）
     autoHarvestFish: true, // 魚池裡長成的魚自動收成（倉庫放得下才收；不會補魚苗）
     autoCollectMachines: true, // 機器做好的成品自動收進倉庫（倉庫放得下才收）
@@ -150,6 +149,7 @@
   let note = '';
   let noteTimer = null;
   let badge = null;
+  let collapsed = false; // 右下角標籤縮成小方格（只存在記憶體，不寫入任何儲存空間；重新整理頁面就恢復完整資訊）
 
   let targetCrop = null; // { id, name }：這次要自動種植並賣出的作物；不寫入任何儲存空間
   let panel = null; // 設定作物的輸入面板
@@ -311,6 +311,8 @@
 
   // 倉庫裡哪些物品要賣：只賣設定的作物與它的有機版（有機作物收成後 id 是 org_<作物 id>）
   const isSellTarget = (id) => !!targetCrop && (id === targetCrop.id || id === 'org_' + targetCrop.id);
+  // 雜草（物品代號 weed）：賣設定作物時一併賣掉。只認這一個代號，其他東西（蛋、奶、糞便…）一律不賣
+  const isSellWeed = (id) => CONFIG.sellWeedsWithCrops && id === 'weed';
 
   // 作物要到幾級才解鎖（與遊戲相同：升級表裡第一次出現該作物的等級，沒出現就是 1）
   function unlockLevel(CFG, id) {
@@ -384,7 +386,7 @@
       if (clear) clear.click();
       let picked = 0;
       for (const tr of document.querySelectorAll('#modalBody tr[data-bs259]')) {
-        if (!isSellTarget(tr.dataset.bs259)) continue;
+        if (!isSellTarget(tr.dataset.bs259) && !isSellWeed(tr.dataset.bs259)) continue;
         const cb = tr.querySelector('input.cb259');
         if (!cb) continue;
         if (!cb.checked) cb.click();
@@ -883,33 +885,20 @@
     if (otherBlocked > 0) hints.push('倉庫空位不多，' + otherBlocked + ' 格其他作物先不收');
 
     // 雜草、草球：拔掉要收進倉庫，只有拔完還剩 weedKeepFree 個空位以上才拔，而且排在其他東西之後，不搶它們的空位。
-    // 空位不夠只是暫停，不會因此觸發賣出（雜草不值得賣東西去換空位）。
-    // 倉庫裡的雜草也有上限（weedMaxStock）：雜草不值錢又不會自動賣掉，不設上限的話整個倉庫會被它佔滿。
-    // 兩種原因分開記、分開寫在標籤上（連同數字），才看得出是空位不夠、還是倉庫裡的雜草已經到上限。
+    // 空位不夠只是暫停，不會因此觸發賣出；倉庫裡的雜草沒有數量上限，等下次賣出設定作物時會一併賣掉（sellWeedsWithCrops）。
     let weedNoRoom = 0; // 空位不夠（拔完要保留 weedKeepFree 格）而先不拔的格數
-    let weedAtMax = 0; // 倉庫裡的雜草已到上限（weedMaxStock）而先不拔的格數
-    let weedStock = (S.inv && S.inv.weed) || 0;
-    const weedStockNow = weedStock;
     const roomForWeeds = room; // 排完其他東西之後、還沒拔雜草之前剩的空位（標籤用）
     for (const [k, kind, n] of weedCand) {
-      if (room - n >= CONFIG.weedKeepFree && weedStock + n <= CONFIG.weedMaxStock) {
+      if (room - n >= CONFIG.weedKeepFree) {
         cleanups.push([k, kind]);
         room -= n;
-        weedStock += n;
-      } else if (room - n < CONFIG.weedKeepFree) {
-        weedNoRoom += 1;
       } else {
-        weedAtMax += 1;
+        weedNoRoom += 1;
       }
     }
     if (weedNoRoom > 0) {
       hints.push(
         '倉庫剩 ' + roomForWeeds + ' 格空位（拔雜草要保留 ' + CONFIG.weedKeepFree + ' 格），' + weedNoRoom + ' 格雜草先不拔'
-      );
-    }
-    if (weedAtMax > 0) {
-      hints.push(
-        '倉庫裡已有 ' + weedStockNow + ' 個雜草（上限 ' + CONFIG.weedMaxStock + '），' + weedAtMax + ' 格雜草先不拔'
       );
     }
     // 腳本一次只處理畫面上的這一座島（遊戲的「農場 N」分頁）；其他島的雜草、作物都不會動，標籤提醒一下
@@ -1216,7 +1205,7 @@
       status = '';
     }
     log('自動功能', on ? 'ON' : 'OFF');
-    renderBadge(true);
+    renderBadge(false); // 縮成小方格時也看得到 ON／OFF，不必為了開關特地展開
   }
 
   // ───────────────────────── 畫面標籤 ─────────────────────────
@@ -1240,23 +1229,22 @@
   function createBadge() {
     const el = document.createElement('div');
     el.id = BADGE_ID;
-    el.title = '點一下可隱藏（按開關鍵會再次顯示）';
     Object.assign(el.style, {
       position: 'fixed',
       right: '8px',
       bottom: '8px',
       zIndex: '2147483647',
-      padding: '4px 8px',
-      font: '12px/1.4 sans-serif',
       color: '#fff',
       borderRadius: '6px',
       cursor: 'pointer',
       userSelect: 'none',
       whiteSpace: 'pre-line',
-      textAlign: 'right',
+      boxSizing: 'border-box',
     });
+    // 點一下在「完整資訊」與「小方格」之間切換（不會消失，狀態一直看得到）
     el.addEventListener('click', () => {
-      el.style.display = 'none';
+      collapsed = !collapsed;
+      renderBadge(false);
     });
     document.body.appendChild(el);
     return el;
@@ -1277,10 +1265,51 @@
     return keys.map(([k, label]) => keyLabel(k) + ' ' + label).join('｜');
   }
 
+  // 小方格只放最重要的兩件事：ON／OFF（開著但暫停中就寫「暫停」）、開啟後累計做成幾件事；
+  // 底色同樣表示狀態：灰＝關、綠＝運作中、琥珀＝開著但暫停中。滑鼠移上去會顯示完整的狀態文字。
+  const totalActions = () => Object.values(stats).reduce((a, b) => a + b, 0);
+  const isPausedStatus = () => /暫停中|尚未設定|等待遊戲|設定作物中/.test(status);
+
+  // show＝true：要讓玩家看到訊息（診斷結果、錯誤、開機）時，一律展開成完整資訊
   function renderBadge(show) {
     if (!badge) return;
-    if (show) badge.style.display = '';
-    badge.style.background = enabled ? 'rgba(0, 110, 0, 0.85)' : 'rgba(0, 0, 0, 0.7)';
+    if (show) collapsed = false;
+    const paused = enabled && isPausedStatus();
+    badge.style.background = !enabled
+      ? 'rgba(0, 0, 0, 0.7)'
+      : paused
+        ? 'rgba(150, 95, 0, 0.9)'
+        : 'rgba(0, 110, 0, 0.85)';
+    if (collapsed) {
+      Object.assign(badge.style, {
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: '52px',
+        height: '52px',
+        padding: '0',
+        font: '700 12px/1.3 sans-serif',
+        textAlign: 'center',
+      });
+      badge.title =
+        (enabled ? status || '運作中' : '自動：OFF（' + keyLabel(CONFIG.toggleKey) + ' 開啟）') + '\n點一下展開';
+      badge.textContent = enabled ? (paused ? '暫停' : 'ON') + '\n✓' + totalActions() : 'OFF';
+      lastRenderAt = Date.now();
+      return;
+    }
+    Object.assign(badge.style, {
+      display: 'block',
+      flexDirection: '',
+      alignItems: '',
+      justifyContent: '',
+      width: 'auto',
+      height: 'auto',
+      padding: '4px 8px',
+      font: '12px/1.4 sans-serif',
+      textAlign: 'right',
+    });
+    badge.title = '點一下縮成小方格';
     const lines = [
       'SkyFarm 輔助 v' + VERSION + '｜自動：' + (enabled ? 'ON' : 'OFF'),
       '作物：' + (targetCrop ? targetCrop.name + '（' + targetCrop.id + '）' : '未設定'),
@@ -1428,7 +1457,7 @@
       selectedSeed: S.sel.seed,
       targetCrop: targetCrop ? targetCrop.id : null,
       storage: { used: info.used, cap: info.cap, free: info.free },
-      weedStock: (S.inv && S.inv.weed) || 0, // 倉庫裡的雜草（到 CONFIG.weedMaxStock 就不再拔）
+      weedStock: (S.inv && S.inv.weed) || 0, // 倉庫裡的雜草（賣出設定作物時一併賣掉）
       maps: { total: S.maps.length, current: S.cur + 1 }, // 腳本只處理畫面上的這一座島
       expandMode: isExpandMode(), // 遊戲的擴地模式開著時腳本會暫停
       inventoryByCategory: inv,
@@ -1472,8 +1501,7 @@
         '｜倉庫 ' + G.storage.used + '/' + G.storage.cap + '｜金幣 ' + G.coins + '｜雨水 ' + G.rainWater +
         '\n動物：' + G.animals.total + ' 隻｜餓了 ' + G.animals.hungry + '｜長大待出貨 ' + G.animals.meatReadyToShip +
         '｜蜂蜜 ' + G.hives.jars + ' 罐' +
-        '\n雜草：地上 ' + G.ground.weed + '（草球 ' + G.ground.weedball + '）｜倉庫 ' + G.weedStock + '/' +
-        CONFIG.weedMaxStock + '｜空位 ' + G.storage.free + '（拔雜草要留 ' + CONFIG.weedKeepFree + '）' +
+        '\n雜草：地上 ' + G.ground.weed + '（草球 ' + G.ground.weedball + '）｜倉庫 ' + G.weedStock + ' 個｜空位 ' + G.storage.free + '（拔雜草要留 ' + CONFIG.weedKeepFree + '）' +
         '\n島 ' + G.maps.current + '/' + G.maps.total + (G.expandMode ? '｜擴地模式中（腳本暫停）' : '')
       : '診斷：遊戲介面還沒載入';
 

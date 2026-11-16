@@ -161,3 +161,39 @@ test('收成放不下下一格：先賣出騰空間，之後繼續收成', async
   assert.equal(ctx.world.fullPrompts, 0, '全程沒跳出「倉庫滿了」');
   assert.equal(Object.values(ctx.world.M.tiles).filter((t) => t.crop && t.crop.prog > 0).length, 0, '4 格都收完了');
 });
+
+// ───── 賣設定作物時一併賣掉雜草（使用者 2026-11-16 要求）─────
+
+test('賣出設定的作物時，倉庫裡的雜草一併勾選賣掉（1 金幣一個）；蛋、糞便、其他作物仍然不動', async () => {
+  const ctx = nearlyFull({ inv: { wheat: 3, org_wheat: 2, weed: 7, egg: 5, corn: 4, poop: 2 } });
+  const { world } = ctx;
+  await step(ctx);
+  assert.deepEqual(world.storageUI.sold.map(([id]) => id).sort(), ['org_wheat', 'weed', 'wheat']);
+  assert.equal(world.S.player.coins, 100 + 3 * 15 + 2 * 21 + 7 * 1);
+  assert.deepEqual({ ...world.S.inv }, { egg: 5, corn: 4, poop: 2 }, '雜草賣光，其他東西原封不動');
+  assert.equal(ctx.t.stats.sellRuns, 1);
+});
+
+test('倉庫快滿、但只有雜草沒有設定的作物：也會把雜草賣掉騰出空間', async () => {
+  const ctx = boot({ cap: 20, inv: { weed: 14, egg: 4 }, coins: 10 });
+  await step(ctx);
+  assert.deepEqual(ctx.world.storageUI.sold.map(([id]) => id), ['weed']);
+  assert.equal(ctx.world.S.inv.weed, undefined);
+  assert.equal(ctx.world.S.inv.egg, 4);
+  assert.equal(ctx.world.S.player.coins, 10 + 14);
+});
+
+test('sellWeedsWithCrops 關掉：只賣設定的作物，雜草留在倉庫', async () => {
+  const ctx = nearlyFull({ inv: { wheat: 3, weed: 7, egg: 5, corn: 4 } });
+  ctx.t.CONFIG.sellWeedsWithCrops = false;
+  await step(ctx);
+  assert.deepEqual(ctx.world.storageUI.sold.map(([id]) => id), ['wheat']);
+  assert.equal(ctx.world.S.inv.weed, 7);
+});
+
+test('倉庫裡沒有雜草也沒有作物：照舊提示「沒有小麥」並暫停重試（雜草不影響這個判斷）', async () => {
+  const ctx = boot({ cap: 10, inv: { egg: 8, corn: 1 } });
+  await step(ctx);
+  assert.match(ctx.t.note, /倉庫快滿但沒有賣出：倉庫裡沒有小麥/);
+  assert.ok(ctx.t.sellBlockedUntil > ctx.clock.now - 31000);
+});

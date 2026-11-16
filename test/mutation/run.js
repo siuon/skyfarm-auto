@@ -31,8 +31,6 @@ const MUTATIONS = [
   ['補買飼料不再看遊戲的自動買設定', 'S.settings && S.settings.autoBuyFeed && coinsLeft', 'coinsLeft'],
   ['肉用動物長大後也被當成餓了（會被點、被宰）', "if (A.type === 'meat') return false;", '/* mutated */'],
   ['賣出範圍放寬成全部（連蛋都賣）', "(id === targetCrop.id || id === 'org_' + targetCrop.id)", 'true'],
-  ['雜草不再保留空位', 'room - n >= CONFIG.weedKeepFree && weedStock + n <= CONFIG.weedMaxStock', 'weedStock + n <= CONFIG.weedMaxStock'],
-  ['雜草庫存不再設上限', 'room - n >= CONFIG.weedKeepFree && weedStock + n <= CONFIG.weedMaxStock', 'room - n >= CONFIG.weedKeepFree'],
   ['每個週期的動作數上限被拿掉', 'if (done >= CONFIG.maxActionsPerTick) break;', ''],
   ['機器小選單改按「升級」', "'button[data-m61=\"' + want + '\"]'", "'button[data-m61=\"upgrade\"]'"],
   ['照顧工具不再確認是「捉蟲」', "if (sel.none49 || sel.care !== 'catch') {", 'if (sel.none49) {'],
@@ -64,8 +62,15 @@ const MUTATIONS = [
   ['魚池不再收成', 'pools.push([k, \'pool\', pk]);\n            room -= ps.harvestQty;', 'room -= ps.harvestQty;'],
   ['擴地模式時不再暫停（點擊會被遊戲吞掉）', 'if (isExpandMode()) {', 'if (false) {'],
   ['擴地模式偵測壞掉（認不出狀態列的標籤）', "String(el.textContent || '').includes('擴地模式')", "String(el.textContent || '').includes('不存在的字')"],
-  ['雜草空位不夠的原因被說成庫存已滿', '} else if (room - n < CONFIG.weedKeepFree) {\n        weedNoRoom += 1;', '} else if (false) {\n        weedNoRoom += 1;'],
   ['多座島時標籤不再提醒', 'if (S.maps.length > 1) hints.push(', 'if (false) hints.push('],
+  ['雜草不再保留空位', 'if (room - n >= CONFIG.weedKeepFree) {\n        cleanups.push([k, kind]);', 'if (true) {\n        cleanups.push([k, kind]);'],
+  ['賣出時不再一併賣雜草', 'if (!isSellTarget(tr.dataset.bs259) && !isSellWeed(tr.dataset.bs259)) continue;', 'if (!isSellTarget(tr.dataset.bs259)) continue;'],
+  ['賣雜草的範圍放寬成任何物品（連蛋都賣）', "CONFIG.sellWeedsWithCrops && id === 'weed'", 'CONFIG.sellWeedsWithCrops && true'],
+  ['sellWeedsWithCrops 開關不再看', "CONFIG.sellWeedsWithCrops && id === 'weed'", "id === 'weed'"],
+  ['標籤點一下又變成整個消失', 'collapsed = !collapsed;\n      renderBadge(false);', "el.style.display = 'none';"],
+  ['有訊息時不再自動展開小方格', 'if (show) collapsed = false;', ''],
+  ['暫停時小方格不再變琥珀色、也不寫暫停', 'const paused = enabled && isPausedStatus();', 'const paused = false;'],
+  ['開關會把小方格展開', "log('自動功能', on ? 'ON' : 'OFF');\n    renderBadge(false);", "log('自動功能', on ? 'ON' : 'OFF');\n    renderBadge(true);"],
 ];
 
 const countOf = (text, find) => text.split(find).length - 1;

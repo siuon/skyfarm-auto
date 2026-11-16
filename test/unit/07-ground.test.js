@@ -58,19 +58,25 @@ test('雜草：拔完倉庫要還剩 weedKeepFree（30）個空位以上，否�
   assert.match(ctx.t.status, /倉庫剩 30 格空位（拔雜草要保留 30 格），1 格雜草先不拔/);
 });
 
-test('雜草：倉庫裡的雜草有上限（weedMaxStock 40），草球照數量算', async () => {
+test('雜草：倉庫裡的雜草沒有數量上限（只看空位），草球照數量算空位', async () => {
   let ctx = boot({ tiles: { '0,0': weed() }, inv: { weed: 39 }, cap: 1000 });
   await run(ctx, 3);
-  assert.equal(ctx.world.S.inv.weed, 40, '39 + 1 ≤ 40');
+  assert.equal(ctx.world.S.inv.weed, 40);
   ctx = boot({ tiles: { '0,0': weed() }, inv: { weed: 40 }, cap: 1000 });
   await run(ctx, 3);
-  assert.equal(ctx.world.S.inv.weed, 40, '已經 40 個，不再拔');
-  ctx = boot({ tiles: { '0,0': ball(3) }, inv: { weed: 38 }, cap: 1000 });
+  assert.equal(ctx.world.S.inv.weed, 41, '已經有 40 個也照拔（不再有 40 個的上限）');
+  ctx = boot({ tiles: { '0,0': ball(3) }, inv: { weed: 300 }, cap: 1000 });
   await run(ctx, 3);
-  assert.equal(ctx.world.S.inv.weed, 38, '38 + 3 > 40');
-  ctx = boot({ tiles: { '0,0': ball(2) }, inv: { weed: 38 }, cap: 1000 });
+  assert.equal(ctx.world.S.inv.weed, 303, '草球一次 3 個');
+  ctx = boot({ tiles: { '0,0': ball(3) }, cap: 100, inv: { filler: 66 } }); // 空位 34：拔完剩 31 ≥ 30
+  decoCfg(ctx);
   await run(ctx, 3);
-  assert.equal(ctx.world.S.inv.weed, 40, '38 + 2 ≤ 40');
+  assert.equal(ctx.world.S.inv.weed, 3);
+  ctx = boot({ tiles: { '0,0': ball(5) }, cap: 100, inv: { filler: 66 } }); // 空位 34：拔完剩 29 < 30
+  decoCfg(ctx);
+  await run(ctx, 3);
+  assert.equal(ctx.world.S.inv.weed, undefined, '空位不夠就不拔，草球還在地上');
+  assert.ok(ctx.world.M.tiles['0,0']);
 });
 
 test('草球：一顆草球 = n 個雜草，空位要放得下 n 個又保留 weedKeepFree', async () => {

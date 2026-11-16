@@ -164,6 +164,8 @@ test('設定 machines 與 machineUpgrade：投入／產出、升級規則', () =
 test('設定：糞便與雜草的物品代號、捉蟲的選項與次數', () => {
   assert.equal(CFG.weeds.item, 'weed', '腳本直接用 S.inv.weed 算雜草庫存');
   assert.ok(CFG.items.poop && CFG.items.weed);
+  assert.ok(isNum(CFG.items.weed.sellPrice), '雜草有售價，倉庫批次賣出才會給它勾選框（賣作物時一併賣雜草）');
+  assert.equal(CFG.items.weed.category, 'material', '雜草在倉庫的「肥料」分類（農產倉庫分頁內）');
   assert.ok(CFG.care.options.catch, '照顧工具要有「捉蟲」選項（id=catch）');
   assert.ok(CFG.care.options.pesticide && CFG.care.options.chem, '農藥與化肥選項還在（腳本用「只選 catch」來避開它們）');
   assert.ok(isNum(CFG.pests.catchTaps) && CFG.pests.catchTaps >= 1);

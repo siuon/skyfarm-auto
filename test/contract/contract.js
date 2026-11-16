@@ -82,6 +82,10 @@ module.exports = {
     { name: '收成放不下時一律走 deliver（跳「農產倉庫滿了」）', game: ['function deliver(goods, x, y, finalize, label)', 'openFullPrompt(goods, free'] },
     { name: '餵食條件 canFeed 與自動買飼料設定', game: ['function canFeed', 'autoBuyFeed'] },
     { name: '倉庫批次賣出介面（勾選框、結帳列、確認視窗預設全數賣出）', game: ['function decorate259', 'function openBatch259', 'bs259'] },
+    {
+      name: '批次賣出：任何有售價的物品（雜草、糞便也是）每列都有勾選框，確認視窗預設全數賣出',
+      game: ['if (!id || !CFG.items[id] || CFG.items[id].sellPrice == null) return;', 'tr.dataset.bs259 = id', 'value="${R[id].max}"'],
+    },
     { name: '收成放不下時跳「農產倉庫滿了」視窗', game: ['農產倉庫滿了'] },
     { name: '倉庫視窗的標題是「倉庫」', game: ["openModal('倉庫'", "title === '倉庫'"] },
   ],

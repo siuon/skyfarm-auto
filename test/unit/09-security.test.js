@@ -125,7 +125,8 @@ test('釘住的使用者決定：預設值', () => {
   assert.equal(C.sellWhenFreeAtMost, 5);
   assert.equal(C.sellRetryMs, 30000);
   assert.equal(C.weedKeepFree, 30);
-  assert.equal(C.weedMaxStock, 40);
+  assert.equal(C.weedMaxStock, undefined, '雜草在倉庫裡沒有數量上限（2026-11-16 使用者要求移除）');
+  assert.equal(C.sellWeedsWithCrops, true, '賣出設定的作物時，倉庫裡的雜草一併賣掉（2026-11-16 使用者要求）');
   assert.equal(C.machineMaxStock, 100);
   assert.deepEqual([...C.loadMachineIds], ['compost_bin', 'fish_feed_machine'], '玉米餅機不在投料白名單');
   assert.equal(C.waterBelow, 1);
@@ -136,9 +137,16 @@ test('賣出範圍：只賣設定的作物（含有機版）——蛋、奶、�
   const e = load();
   e.t.targetCrop = { id: 'wheat', name: '小麥' };
   for (const id of ['egg', 'wool', 'poop', 'tilapia', 'orange', 'weed', 'organic_fert', 'corn_cake', 'fish_feed', 'pasture', 'chicken_meat']) {
-    assert.equal(e.t.isSellTarget(id), false, id + ' 不賣');
+    assert.equal(e.t.isSellTarget(id), false, id + ' 不是「設定的作物」');
   }
   assert.equal(e.t.isSellTarget('wheat') && e.t.isSellTarget('org_wheat'), true);
+  // 雜草是唯一例外（使用者 2026-11-16 要求：賣作物時一併賣掉雜草），而且只認 weed 這一個代號
+  assert.equal(e.t.isSellWeed('weed'), true);
+  for (const id of ['egg', 'wool', 'poop', 'tilapia', 'orange', 'organic_fert', 'corn_cake', 'wheat', 'org_wheat', 'weedball', 'org_weed', 'weeds', '']) {
+    assert.equal(e.t.isSellWeed(id), false, id + ' 不能被當成雜草賣掉');
+  }
+  e.t.CONFIG.sellWeedsWithCrops = false;
+  assert.equal(e.t.isSellWeed('weed'), false, '關掉 sellWeedsWithCrops 就不賣雜草');
 });
 
 test('選擇器清單：腳本實際用到的每個 id 與選擇器都有登記在契約裡，而且契約沒有多餘的項目', () => {

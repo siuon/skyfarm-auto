@@ -18,7 +18,7 @@ const SCRIPT_PATH = path.join(__dirname, '..', '..', 'skyfarm-auto.js');
 // 要匯出的內部名稱。名稱在腳本裡不存在的話，載入時會丟 ReferenceError，測試立刻失敗。
 const FUNCS = [
   'game', 'storageInfo', 'isModalOpen', 'modalTitle', 'isRipe', 'hostOf', 'treeReady', 'poolState', 'machineState',
-  'isAdultAnimal', 'animalHungry', 'animalFeedNeed', 'targetStock', 'fmtSec', 'isSellTarget', 'unlockLevel',
+  'isAdultAnimal', 'animalHungry', 'animalFeedNeed', 'targetStock', 'fmtSec', 'isSellTarget', 'isSellWeed', 'unlockLevel',
   'resolveCrop', 'waitFor', 'sellFlow', 'ensureToolIs', 'prepareTool', 'prepareCareTool', 'animalAway',
   'markAnimalTap', 'settlePopup', 'doFields', 'tick', 'onTick', 'setEnabled', 'setStatus', 'setNote',
   'renderBadge', 'hotkeyLine', 'describeGame', 'runProbe', 'openCropPanel', 'closePanel', 'requestToggle',
@@ -26,7 +26,7 @@ const FUNCS = [
 ];
 const CONSTS = ['CONFIG', 'VERSION', 'NAME', 'BADGE_ID', 'PANEL_ID', 'cooldown', 'wetting'];
 const STATE = [
-  ['enabled', false], ['status', false], ['note', false], ['stats', false], ['badge', false], ['panel', false],
+  ['enabled', false], ['status', false], ['note', false], ['stats', false], ['badge', false], ['collapsed', true], ['panel', false],
   ['targetCrop', true], ['needSell', true], ['sellBlockedUntil', true], ['lastActionAt', true], ['timer', false],
 ];
 

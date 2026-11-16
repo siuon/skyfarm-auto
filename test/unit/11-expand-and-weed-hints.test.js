@@ -76,20 +76,13 @@ test('標籤：倉庫空位不夠 → 寫出剩幾格、要保留幾格、幾格
   assert.ok(!/雜草（上限|倉庫裡已有/.test(ctx.t.status), '不是庫存上限的原因');
 });
 
-test('標籤：倉庫裡的雜草到上限 → 寫出已有幾個、上限多少、幾格雜草沒拔（不會說成空位不夠）', async () => {
-  const ctx = boot({ tiles: { '0,0': weed(), '1,0': weed(), '2,0': weed() }, cap: 1000, inv: { weed: 40 } });
-  await run(ctx, 3);
-  assert.equal(ctx.world.S.inv.weed, 40);
-  assert.match(ctx.t.status, /倉庫裡已有 40 個雜草（上限 40），3 格雜草先不拔/);
-  assert.ok(!/拔雜草要保留/.test(ctx.t.status), '不是空位的原因');
-});
-
-test('標籤：庫存只差一個——拔了一格，剩下那格才標示上限（數字是當下的庫存）', async () => {
-  const ctx = boot({ tiles: { '0,0': weed(), '1,0': weed() }, cap: 1000, inv: { weed: 39 } });
+test('倉庫裡已經有很多雜草也照拔：雜草在倉庫裡沒有數量上限，只看空位（2026-11-16 使用者要求移除上限）', async () => {
+  const ctx = boot({ tiles: { '0,0': weed(), '1,0': weed(), '2,0': weed() }, cap: 1000, inv: { weed: 200 } });
   await run(ctx, 4);
-  assert.equal(ctx.world.S.inv.weed, 40);
-  assert.equal(Object.values(ctx.world.M.tiles).filter((t) => t.t === 'weed').length, 1, '另一格還在地上');
-  assert.match(ctx.t.status, /倉庫裡已有 40 個雜草（上限 40），1 格雜草先不拔/);
+  assert.equal(ctx.world.S.inv.weed, 203);
+  assert.equal(Object.values(ctx.world.M.tiles).filter((t) => t.t === 'weed').length, 0, '地上的雜草都拔掉了');
+  assert.ok(!/雜草/.test(ctx.t.status), ctx.t.status);
+  assert.equal(ctx.t.CONFIG.weedMaxStock, undefined, '設定裡已經沒有 weedMaxStock');
 });
 
 test('標籤：空位夠、庫存沒滿時，沒有任何雜草暫停提示', async () => {
@@ -99,12 +92,12 @@ test('標籤：空位夠、庫存沒滿時，沒有任何雜草暫停提示', as
   assert.ok(!/雜草/.test(ctx.t.status), ctx.t.status);
 });
 
-test('雜草的上限與保留空位不變（使用者 2026-11-15 決定：不自動賣雜草，只改提示）', async () => {
-  const ctx = boot({ tiles: { '0,0': weed() }, cap: 1000, inv: { weed: 40 } });
+test('雜草再多也不會單獨觸發賣出（空位夠就不開倉庫）；保留空位 weedKeepFree 仍是 30', async () => {
+  const ctx = boot({ tiles: { '0,0': weed() }, cap: 1000, inv: { weed: 400 } });
   await run(ctx, 6);
-  assert.equal(ctx.world.storageUI.opens, 0, '雜草到上限也不去開倉庫賣');
-  assert.equal(ctx.world.storageUI.sold.length, 0);
-  assert.equal(ctx.t.isSellTarget('weed'), false);
+  assert.equal(ctx.world.storageUI.opens, 0, '空位 599 遠高於賣出門檻，不去開倉庫');
+  assert.equal(ctx.world.S.inv.weed, 401);
+  assert.equal(ctx.t.CONFIG.weedKeepFree, 30);
 });
 
 // ───── 多座島 ─────
@@ -150,6 +143,6 @@ test('診斷：倉庫雜草數、島嶼、擴地模式；摘要有雜草與島�
   assert.equal(g.expandMode, true);
   ctx.env.key('KeyD');
   await ctx.clock.advance(0);
-  assert.match(ctx.t.note, /雜草：地上 1（草球 1）｜倉庫 12\/40｜空位 188（拔雜草要留 30）/);
+  assert.match(ctx.t.note, /雜草：地上 1（草球 1）｜倉庫 12 個｜空位 188（拔雜草要留 30）/);
   assert.match(ctx.t.note, /島 1\/2｜擴地模式中（腳本暫停）/);
 });

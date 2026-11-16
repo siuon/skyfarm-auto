@@ -182,16 +182,73 @@ test('開關：已有作物時 Alt+Shift+A 直接開／關；開啟會歸零統�
   assert.equal(clock.pending, 1, '重複開啟不會多出計時器');
 });
 
-test('標籤：點一下隱藏、再按開關鍵會重新顯示；開啟時顯示統計與狀態', () => {
+test('標籤：點一下縮成小方格（不會消失）、再點一下展開；開啟時顯示統計與狀態', () => {
   const { env, t } = boot({}, { enable: false });
+  assert.equal(t.collapsed, false, '預設是完整資訊');
+  assert.equal(t.badge.style.display, 'block');
   t.badge.click();
-  assert.equal(t.badge.style.display, 'none');
+  assert.equal(t.collapsed, true);
+  assert.equal(t.badge.style.display, 'flex', '還在畫面上，只是縮小（不再是 none）');
+  assert.equal(t.badge.style.width, '52px');
+  assert.equal(t.badge.style.height, '52px');
+  assert.equal(t.badge.textContent, 'OFF');
+  t.badge.click();
+  assert.equal(t.collapsed, false);
+  assert.equal(t.badge.style.display, 'block');
+  assert.equal(t.badge.style.width, 'auto');
   env.key('KeyA');
-  assert.equal(t.badge.style.display, '', '按開關鍵會重新顯示');
   const text = t.badge.textContent;
   assert.match(text, /收成 0｜播種 0｜澆水 0｜捉蟲 0｜撿拾 0｜賣出 0 次/);
   assert.match(text, /果樹 0｜魚池 0｜機器 0｜雜物 0｜餵食 0/);
   assert.match(text, /開啟後還沒做成任何事/);
+});
+
+test('小方格：關＝OFF、開＝ON 加累計件數、開著但暫停＝暫停；底色灰／綠／琥珀；提示文字是完整狀態', () => {
+  const { env, t } = boot({}, { enable: false });
+  t.badge.click();
+  const off = t.badge.style.background;
+  assert.equal(t.badge.textContent, 'OFF');
+  assert.match(t.badge.title, /自動：OFF（Alt\+Shift\+A 開啟）/);
+  env.key('KeyA'); // 縮成小方格時開關鍵照常運作，而且不會把方格展開
+  assert.equal(t.collapsed, true, '開關不會把小方格展開');
+  assert.equal(t.badge.textContent, 'ON\n✓0');
+  const on = t.badge.style.background;
+  assert.notEqual(on, off);
+  t.stats.harvest = 3; t.stats.plant = 2; t.stats.sellRuns = 1; t.stats.clean = 4;
+  t.renderBadge(false);
+  assert.equal(t.badge.textContent, 'ON\n✓10', '累計＝所有統計加總');
+  t.setStatus('有視窗開啟（每日簽到），暫停中');
+  assert.equal(t.badge.textContent, '暫停\n✓10');
+  assert.notEqual(t.badge.style.background, on, '暫停是另一種底色（琥珀）');
+  assert.notEqual(t.badge.style.background, off);
+  assert.match(t.badge.title, /有視窗開啟（每日簽到），暫停中\n點一下展開/);
+  t.setStatus('運作中');
+  assert.equal(t.badge.textContent, 'ON\n✓10');
+  assert.equal(t.badge.style.background, on);
+  env.key('KeyA');
+  assert.equal(t.badge.textContent, 'OFF');
+  assert.equal(t.badge.style.background, off);
+});
+
+test('小方格：要讓玩家看到的訊息（診斷結果、錯誤…）一律自動展開；展開後仍可再縮回去', async () => {
+  const { t, clock } = boot({}, { enable: false });
+  t.badge.click();
+  assert.equal(t.collapsed, true);
+  t.setNote('測試訊息', 1000);
+  assert.equal(t.collapsed, false, '有訊息要給玩家看就展開');
+  assert.match(t.badge.textContent, /測試訊息/);
+  t.badge.click();
+  assert.equal(t.collapsed, true, '玩家可以再縮回去');
+  assert.equal(t.badge.textContent, 'OFF');
+  await clock.advance(1500);
+  assert.equal(t.collapsed, true, '訊息消失時不會自己展開或縮小');
+});
+
+test('小方格狀態只存在記憶體：不寫入任何儲存空間，也不留在 window 上', () => {
+  const e = boot({}, { enable: false });
+  e.t.badge.click();
+  assert.equal(e.env.win.localStorage, undefined);
+  assert.ok(!Object.getOwnPropertyNames(e.env.win).some((k) => /collapsed/i.test(k)));
 });
 
 test('計時器驅動：開啟後每個 tickMs 自動跑一次週期（不必手動呼叫 tick）', async () => {
