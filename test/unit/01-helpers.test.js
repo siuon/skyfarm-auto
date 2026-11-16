@@ -38,7 +38,7 @@ test('keyLabel / matchKey / hotkeyLine', () => {
   assert.equal(t.matchKey(ev({ ctrlKey: true }), k), false, '多按 Ctrl 不算');
   assert.equal(t.matchKey(ev({ metaKey: true }), k), false, '按了 Meta 不算');
   assert.equal(t.matchKey(ev({ code: 'KeyB' }), k), false);
-  assert.equal(t.hotkeyLine(), 'Alt+Shift＋A 開關／S 作物／D 診斷');
+  assert.equal(t.hotkeyLine(), 'Alt+Shift＋A 開關／S 作物／D 診斷／M 島嶼');
 });
 
 test('unlockLevel：升級表第一次出現的等級；沒出現就是 1', () => {

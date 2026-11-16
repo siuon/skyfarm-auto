@@ -18,8 +18,10 @@ function attachWorld(env, o = {}) {
   const { win, doc } = env;
   const CFG = o.cfg || makeCfg();
   const S = {
-    cur: 0,
-    maps: [{ tiles: Object.assign({}, o.tiles || {}), pools: o.pools || {} }],
+    cur: o.cur || 0,
+    maps: [{ tiles: Object.assign({}, o.tiles || {}), pools: o.pools || {} }].concat(
+      (o.maps || []).map((m) => ({ tiles: Object.assign({}, m.tiles || {}), pools: m.pools || {} }))
+    ),
     player: { level: o.level ?? 5, coins: o.coins ?? 1000, water: o.water ?? 100 },
     sel: Object.assign({ tool: 'hand', seed: 'wheat', care: 'catch', none49: false }, o.sel || {}),
     inv: Object.assign({}, o.inv || {}),
@@ -27,13 +29,14 @@ function attachWorld(env, o = {}) {
     fleet: JSON.parse(JSON.stringify(o.fleet || {})), // 機器人：{ 種類: [{ id, tier, on, needPart, wear… }] }
   };
   const RT = { mv: null, agents: Object.assign({}, o.agents || {}), pick53: null, lastAnimalTap: null, lastAnimalTapAt: 0 };
-  const M = S.maps[0];
+  let M = S.maps[S.cur]; // 目前顯示的那座島（切島時換掉）
   const edgeFence = new Set(o.edgeFence || []);
   const ckIds = new Set(o.ckIds || ['egg_hen']);
   const cap = o.cap ?? 100;
 
   const world = {
-    S, RT, CFG, M, cap, edgeFence,
+    S, RT, CFG, cap, edgeFence,
+    switches: [], // 「農場 N」按鈕被按了幾次、依序切到哪座
     acts: [], // 每次 act 的紀錄
     fullPrompts: 0, // 跳出「農產倉庫滿了」的次數
     // 「絕不做」計數
@@ -68,6 +71,20 @@ function attachWorld(env, o = {}) {
   pop.hidden = true;
   world.modal = modal; world.modalTitle = modalTitle; world.pop = pop; world.storageBtn = storageBtn;
 
+  Object.defineProperty(world, 'M', { get: () => M, enumerable: true });
+  // 右側的「農場 N」按鈕（#maps）：只有 2 座島以上才有；點了只換顯示的島，並結束擴地模式
+  S.maps.forEach((_, i) => {
+    const b = new FakeEl(doc, 'button');
+    b.dataset.map = String(i);
+    b.onclick = () => {
+      world.switches.push(i);
+      if (o.noSwitch) return; // 模擬「點了沒切成」
+      S.cur = i;
+      M = S.maps[i];
+      world.setExpand(false);
+    };
+    doc.q1('#maps button[data-map="' + i + '"]', b);
+  });
   // 左上的狀態列（#status）：擴地模式開著時，遊戲會在這裡放一個「擴地模式：點虛線區塊購買」的標籤
   const statusBar = doc.register('status', new FakeEl(doc, 'div'));
   world.statusBar = statusBar;
@@ -338,7 +355,7 @@ function attachWorld(env, o = {}) {
   // 最外層：「全部隱藏」時所有點擊無效；動物離家要有點擊記號
   function act(x, y) {
     const k = x + ',' + y, T = M.tiles[k];
-    world.acts.push({ k, tool: S.sel.tool, care: S.sel.care, none49: S.sel.none49, type: T && T.t, id: T && T.id });
+    world.acts.push({ k, cur: S.cur, tool: S.sel.tool, care: S.sel.care, none49: S.sel.none49, type: T && T.t, id: T && T.id });
     if (doc.body.classList.contains('ui-hide')) return;
     if (world.expand) { world.expandTaps += 1; return; } // 擴地模式：點地圖一律當成「點虛線區塊擴地」，已有的格子什麼都不會發生
     if (T && T.t === 'animal') {

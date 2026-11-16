@@ -3,7 +3,7 @@
  *
  * 由 Tampermonkey 透過 @require 載入（設定見 skyfarm-auto.loader.user.js）。
  *
- * 功能（0.13.0）：
+ * 功能（0.14.0）：
  *   - Alt+Shift+S：跳出輸入框，輸入「這次要自動種植的作物」（中文名稱或代號皆可）
  *   - Alt+Shift+A：開啟／關閉自動功能（每次載入頁面一律預設 OFF，不會記住 ON）；
  *                  還沒設定作物就按開啟時，會先跳出輸入框，確認後才開始
@@ -31,7 +31,10 @@
  *          倉庫裡的雜草沒有數量上限；賣出設定作物時會一併把倉庫裡的雜草賣掉（1 金幣一個，CONFIG.sellWeedsWithCrops）。
  *          雜草沒拔時，右下角標籤會寫剩幾格空位、要保留幾格。
  *          遊戲在「擴地模式」時所有點擊都被當成擴地，所以腳本偵測到就暫停（結束擴地模式才繼續）。
- *          腳本一次只處理畫面上的這一座島（有開第 2 座以上的島時，標籤會提醒）。
+ *          有多座島時：預設「全島輪流」（CONFIG.islandMode = 'all'，Alt+Shift+M 切換成只做畫面上這座）。遊戲裡所有島一直在運作，
+ *          但點擊只作用在畫面上那座；腳本先乾跑規劃每座島（不動任何東西）判斷有沒有事做，只切去有事做的島（點右側「農場 N」，和你點的一樣），
+ *          做完回「家島」（按開始時看的那座、或你最後手動切到的那座）。你手動切島時，那座就是家島，30 秒內不自己切走。
+ *          切島會讓畫面跟著換、鏡頭重新對焦（你自己調的縮放會被重設）。細節見下方「多座島」一節。
  *       8. 果樹結果了 → 採收；有蟲 → 抓蟲。魚池有魚長成了 → 收成；機器做好了 → 收成品；
  *          蜂箱裡存了蜂蜜 → 收進倉庫（點到沒蜂蜜的蜂箱會跳蜂箱面板，所以只點有蜂蜜的）。
  *          （都只在倉庫放得下時才收。補魚苗、升級機器一律不碰。）
@@ -74,7 +77,7 @@
   'use strict';
 
   const NAME = 'SkyFarmAuto';
-  const VERSION = '0.13.0';
+  const VERSION = '0.14.0';
   const BADGE_ID = 'skyfarm-auto-badge';
   const PANEL_ID = 'skyfarm-auto-panel';
 
@@ -84,6 +87,7 @@
     toggleKey: { code: 'KeyA', alt: true, shift: true, ctrl: false },
     cropKey: { code: 'KeyS', alt: true, shift: true, ctrl: false },
     probeKey: { code: 'KeyD', alt: true, shift: true, ctrl: false },
+    islandKey: { code: 'KeyM', alt: true, shift: true, ctrl: false }, // 切換「全島輪流／只做畫面上這座」
 
     tickMs: 400, // 每個週期的間隔（毫秒）
     maxActionsPerTick: 3, // 每個週期最多收成／播種幾格（遊戲每次操作都會存檔，不宜一次太多）
@@ -130,6 +134,16 @@
     buyPartsWhenShort: true, // 倉庫沒備品時，花金幣買 1 個再換上（照遊戲商店單價；買完金幣要 ≥ minCoinsAfterBuyParts）
     minCoinsAfterBuyParts: 100, // 買耗材後至少要剩多少金幣（只有開了 buyPartsWhenShort 才用到）
     partsRetryMs: 60000, // 換耗材沒成功（沒備品、金幣不夠、這座島沒有充電樁…）時，隔多久才再試一次
+
+    // 多座島：遊戲裡所有島一直在運作，但點擊只作用在畫面上那座；全島輪流時腳本自己點「農場 N」切島
+    islandMode: 'all', // 'all'＝腳本自己切島、輪流處理有事做的島；'current'＝只處理畫面上這座（Alt+Shift+M 切換）
+    returnHome: true, // 其他島做完後切回「家島」（按開始時看的那座、或你最後手動切到的那座）
+    maxStayMs: 60000, // 一座島連續占用超過這麼久、而別座島也有事做，就讓出去輪下一座
+    stuckMs: 15000, // 這座島有事做、但這麼久都沒做成任何事（卡住了），就先去別座
+    islandRetryMs: 30000, // 切過去卻沒做成事的島，隔多久才再考慮（連續失敗會加倍，最久 5 分鐘）
+    islandHopMinMs: 2000, // 兩次切島之間至少隔多久
+    userSwitchHoldMs: 30000, // 你手動切島後，這段時間內腳本不自己切走
+    skipIslands: [], // 不自動切過去的島（編號從 1 起算）；你自己看著那座時照常處理
   };
 
   // 避免被重複注入
@@ -169,7 +183,7 @@
 
   const newStats = () => ({
     harvest: 0, plant: 0, water: 0, pest: 0, pick: 0, sellRuns: 0,
-    clean: 0, fruit: 0, fish: 0, machine: 0, feed: 0, honey: 0, meat: 0, parts: 0,
+    clean: 0, fruit: 0, fish: 0, machine: 0, feed: 0, honey: 0, meat: 0, parts: 0, hops: 0,
   });
   let stats = newStats();
   const wetting = new Set(); // 正在澆到目標濕度的格子（避免在門檻附近來回澆）
@@ -181,6 +195,21 @@
   const partsBlocked = new Map(); // 充電樁種類 → 換耗材沒成功時，暫停到什麼時候再試
   const partsWhy = new Map(); // 充電樁種類 → 還沒換成的原因（寫在右下角標籤上）
   let partsHint = '';
+  // 多座島（編號都從 0 起算）
+  let islandSave = null; // 目前看到的存檔物件；換存檔就重設所有島嶼狀態
+  let islandCount = 0;
+  let homeIsland = null; // 家島
+  let expectedCur = null; // 腳本認為目前顯示的島；和遊戲不一樣就是玩家手動切了
+  let holdUntil = 0; // 玩家手動切島後，到這個時間之前不自己切走
+  let stayStart = 0; // 這次在這座島開始的時間
+  let progressAt = 0; // 最近一次做成事的時間（判斷卡住）
+  let seenAction = 0;
+  let arrivalAction = 0; // 到達這座島時的 lastActionAt（離開時看有沒有做成事）
+  let lastHopAt = 0;
+  const islandState = new Map(); // 島編號 → { fails, until }：切過去沒做成事的島，暫停到什麼時候
+  let islandHint = ''; // 寫在狀態列的島嶼說明
+  let islandLine = ''; // 完整標籤的島嶼那一行
+  let islandShort = ''; // 小方格的第三行
 
   // ───────────────────────── 遊戲介面 ─────────────────────────
 
@@ -468,6 +497,16 @@
   const partsOf = (CFG) => (CFG && CFG.consumables && CFG.consumables.parts) || {};
   const partItemId = (id) => 'part_' + id;
 
+  // 第 mi 座島上有沒有那種充電樁（建築 T.t === 'building' 且 T.id 是基座種類）
+  function baseOnIsland(g, mi, base) {
+    const M = g.S.maps[mi];
+    for (const k in (M && M.tiles) || {}) {
+      const T = M.tiles[k];
+      if (T && T.t === 'building' && T.id === base) return true;
+    }
+    return false;
+  }
+
   // 現在有哪些機器人在等耗材：{ kind, base（它的充電樁種類）, part, unit, manual（遊戲要求手動換） }
   function partNeeds(g) {
     const { S, CFG } = g;
@@ -584,9 +623,19 @@
     const needs = partNeeds(g);
     const bases = [...new Set(needs.map((n) => n.base))];
     for (const b of Array.from(partsWhy.keys())) if (!bases.includes(b)) partsWhy.delete(b);
-    partsHint = bases.map((b) => partsWhy.get(b)).filter(Boolean).join('、');
     const now = Date.now();
-    const base = bases.find((b) => !(partsBlocked.get(b) > now));
+    // 這座島沒有的充電樁：全島輪流時腳本會自己切到有的島（見 islandPlan）；只做這座時要你切過去
+    const here = bases.filter((b) => baseOnIsland(g, g.S.cur, b));
+    for (const b of bases) {
+      if (here.includes(b)) {
+        if (String(partsWhy.get(b) || '').startsWith('這座島沒有')) partsWhy.delete(b);
+        continue;
+      }
+      const nm = ((g.CFG.buildings || {})[b] || {}).name || b;
+      partsWhy.set(b, '這座島沒有' + nm + '，換不了耗材' + (CONFIG.islandMode === 'all' ? '（全島輪流時會自己切到有的島）' : '（切到有的島才換得了）'));
+    }
+    partsHint = bases.map((b) => partsWhy.get(b)).filter(Boolean).join('、');
+    const base = here.find((b) => !(partsBlocked.get(b) > now));
     return base ? { base, needs: needs.filter((n) => n.base === base) } : null;
   }
 
@@ -780,20 +829,24 @@
     return true;
   }
 
-  function doFields(g) {
+  // 規劃並執行「第 mi 座島」（預設是畫面上這座）的工作。dry＝true 是乾跑：只規劃、不動任何東西
+  // （不點、不寫標籤、不改澆水記錄、不設「要賣出」旗標），用來判斷別座島有沒有事做。
+  // 回傳 { work, needSell }：work＝這座島有事做（乾跑）或這個週期有在做／準備（真跑）；false＝沒事做。
+  function doFields(g, mi = g.S.cur, dry = false) {
     const { S, CFG } = g;
-    const M = S.maps[S.cur];
-    if (!M || !M.tiles) return;
+    const M = S.maps[mi];
+    if (!M || !M.tiles) return { work: false };
+    const ck = (k) => mi + '|' + k; // 冷卻與澆水記錄的鍵要帶島編號，兩座島的同一個座標不能互相干擾
 
     if (!targetCrop) {
-      setStatus('尚未設定作物（' + keyLabel(CONFIG.cropKey) + '）');
-      return;
+      if (!dry) setStatus('尚未設定作物（' + keyLabel(CONFIG.cropKey) + '）');
+      return { work: false };
     }
     const R = CFG.rules || {};
     const seed = CFG.crops[targetCrop.id];
     if (!seed) {
-      setStatus('找不到作物設定：' + targetCrop.id);
-      return;
+      if (!dry) setStatus('找不到作物設定：' + targetCrop.id);
+      return { work: false };
     }
     const info = storageInfo(g);
     const storageFull = info.free === 0 || (info.free === null && info.fullFlag);
@@ -830,6 +883,7 @@
     let hungryAnimals = 0; // 餓了的動物隻數
     let hungryUnfed = 0; // 其中因為飼料不夠而沒餵的
     let blockedPick = false; // 有東西可收但倉庫沒空位
+    let wantSell = false; // 規劃時發現要先賣出（倉庫放不下、金幣不夠買種子）；乾跑時只回報、不設旗標
     let others = 0; // 田裡其他種類的作物（還在長，不澆水也不處理）
     const otherRipe = []; // 田裡其他種類、已經成熟的作物：[格子, 產量]（等其他東西都排好、算過剩餘空位再決定收不收）
     let otherBlocked = 0; // 其中因為倉庫空位不夠而先不收的格數
@@ -840,19 +894,22 @@
 
     // 長蟲的格子要抓蟲；連續抓不掉就不再卡住這格。回傳 true＝這格交給抓蟲處理，其他動作先跳過
     const wantPestCatch = (k) => {
-      const cdp = cooldown.get(k);
+      const cdp = cooldown.get(ck(k));
       if (cdp && cdp.kind === 'pest' && cdp.fails >= 3) return false;
       if (!(cdp && cdp.until > now)) pests.push(k);
       return true;
     };
     // 澆水：濕度低於門檻就開始澆，澆到 upTo 級才停（避免在門檻附近來回澆）。枯萎的澆水可以救活，一律要澆。
+    const wetDel = (k) => {
+      if (!dry) wetting.delete(ck(k));
+    };
     const wantWater = (k, T, wither) => {
       const m = T.m || 0;
-      if (wither || (wetting.has(k) ? m < upTo - 0.001 : m < CONFIG.waterBelow)) {
-        wetting.add(k);
+      if (wither || (wetting.has(ck(k)) ? m < upTo - 0.001 : m < CONFIG.waterBelow)) {
+        if (!dry) wetting.add(ck(k));
         waters.push(k);
       } else {
-        wetting.delete(k);
+        wetDel(k);
       }
     };
 
@@ -864,14 +921,14 @@
       // 用「澆水」工具點：遊戲在處理澆水之前就先扶正了，不會用到水；而「收成」工具點裝飾時，
       // 遊戲會先判斷蝴蝶棲地、野生植物（點了會被拔掉），不適合拿來點裝飾。
       if (T.t === 'deco' && (T.tilt || (T.id === 'fence' && T.fallen))) {
-        const cdd = cooldown.get(k);
+        const cdd = cooldown.get(ck(k));
         if (CONFIG.autoStraighten && !(cdd && cdd.until > now)) tilts.push([k, T.tilt ? 'tilt' : 'fence']);
         continue;
       }
 
       // 雜物：碎石點一下就撿掉（不佔倉庫）；雜草、草球會收進倉庫，先記下來，最後才決定要不要拔
       if (T.t === 'debris' || T.t === 'weed' || T.t === 'weedball') {
-        const cdw = cooldown.get(k);
+        const cdw = cooldown.get(ck(k));
         if (cdw && cdw.until > now) continue;
         if (T.t === 'debris') {
           if (CONFIG.autoClearDebris) cleanups.push([k, 'debris']);
@@ -884,10 +941,10 @@
       // 果樹：長蟲先抓蟲；結果了採收（一次產出不會超過 1 個）；沒結果且開了 autoWaterTrees 才澆水
       if (T.t === 'tree') {
         if (CONFIG.autoCatchPests && CONFIG.catchPestsOnOtherCrops && T.pest && wantPestCatch(k)) continue;
-        const cdt = cooldown.get(k);
+        const cdt = cooldown.get(ck(k));
         if (cdt && cdt.until > now) continue;
         if (treeReady(T, CFG)) {
-          wetting.delete(k);
+          wetDel(k);
           if (!CONFIG.autoHarvestTrees) continue;
           if (room >= 1) {
             pickups.push([k, 'tree']);
@@ -906,7 +963,7 @@
 
       // 機器：做好的成品要收；開了 autoLoadMachines 才會投料
       if (T.t === 'machine') {
-        const cdm = cooldown.get(k);
+        const cdm = cooldown.get(ck(k));
         if (cdm && cdm.until > now) continue;
         const ms = machineState(T, g);
         if (!ms) continue;
@@ -927,7 +984,7 @@
       // 蜂箱：存了蜂蜜就收（整箱一次收進倉庫，所以要放得下整箱）；其他設備（水井、灑水器…）不碰
       if (T.t === 'device') {
         if (!isHive(T, CFG)) continue;
-        const cdh = cooldown.get(k);
+        const cdh = cooldown.get(ck(k));
         if (cdh && cdh.until > now) continue;
         const jars = honeyStored(T);
         if (jars > 0) {
@@ -944,7 +1001,7 @@
 
       // 地上的東西：糞便、動物產出的東西（蛋、奶、羊毛…）。點一下就收進倉庫，所以要倉庫放得下。
       if (T.t === 'poop' || T.t === 'animal') {
-        const cdk = cooldown.get(k);
+        const cdk = cooldown.get(ck(k));
         if (cdk && cdk.until > now) continue;
         if (T.t === 'poop') {
           if (!CONFIG.autoPickPoop) continue;
@@ -1023,19 +1080,19 @@
       if (T.crop && !CONFIG.handleOtherCrops && T.crop.id !== targetCrop.id) {
         // 其他種類的作物：不澆水、不賣；成熟了就收（先記下來，等其他東西都排好、算過剩餘空位再決定）
         if (CONFIG.autoHarvest && CONFIG.harvestOtherCrops && isRipe(T, CFG)) {
-          wetting.delete(k);
-          const cdo = cooldown.get(k);
+          wetDel(k);
+          const cdo = cooldown.get(ck(k));
           if (!(cdo && cdo.until > now)) otherRipe.push([k, (CFG.crops[T.crop.id] || {}).yield || 1]);
         } else {
           others += 1;
         }
         continue;
       }
-      const cd = cooldown.get(k);
+      const cd = cooldown.get(ck(k));
       if (cd && cd.until > now) continue;
       if (T.crop) {
         if (isRipe(T, CFG)) {
-          wetting.delete(k);
+          wetDel(k);
           if (!canHarvest) {
             if (CONFIG.autoHarvest) ripeBlocked += 1;
             continue;
@@ -1046,7 +1103,7 @@
             room -= need;
           } else {
             ripeBlocked += 1;
-            if (CONFIG.autoSell) needSell = true; // 倉庫還有空位但放不下這次收成：也要賣出騰空間，否則會一直卡住
+            if (CONFIG.autoSell) wantSell = true; // 倉庫還有空位但放不下這次收成：也要賣出騰空間，否則會一直卡住
           }
         } else {
           if (!T.crop.wither) {
@@ -1078,7 +1135,7 @@
       const have = Math.floor(S.player.coins);
       const stock = targetStock(S);
       if (CONFIG.autoSell && CONFIG.sellWhenCantPlant && stock > 0) {
-        needSell = true; // 金幣不夠買種子：先把倉庫裡的設定作物賣掉換錢，不等倉庫快滿
+        wantSell = true; // 金幣不夠買種子：先把倉庫裡的設定作物賣掉換錢，不等倉庫快滿
         hints.push('金幣不夠播種（要 ' + need + '，有 ' + have + '），先賣出' + targetCrop.name);
       } else {
         hints.push(
@@ -1095,7 +1152,7 @@
         const P = M.pools[pk];
         if (!P || !P.tiles || !P.tiles.length) continue;
         const k = P.tiles[0];
-        const cdp = cooldown.get(k);
+        const cdp = cooldown.get(ck(k));
         if (cdp && cdp.until > now) continue;
         const ps = poolState(M, P, g);
         if (ps.ready > 0) {
@@ -1142,8 +1199,7 @@
         '倉庫剩 ' + roomForWeeds + ' 格空位（拔雜草要保留 ' + CONFIG.weedKeepFree + ' 格），' + weedNoRoom + ' 格雜草先不拔'
       );
     }
-    // 腳本一次只處理畫面上的這一座島（遊戲的「農場 N」分頁）；其他島的雜草、作物都不會動，標籤提醒一下
-    if (S.maps.length > 1) hints.push('共 ' + S.maps.length + ' 座島，只處理畫面上的第 ' + (S.cur + 1) + ' 座');
+    if (islandHint && !dry) hints.push(islandHint); // 有多座島：說明現在在哪座、是全島輪流還是只做這座
     if (partsHint) hints.push('機器人耗材：' + partsHint);
 
     // 一次只用一種工具：抓蟲要「照顧」工具、播種／收成／魚池要「播種」工具、撿東西要「收成」工具、澆水要「澆水」工具。
@@ -1151,7 +1207,7 @@
     // 要換時優先順序是抓蟲 > 播種收成魚池 > 撿東西雜物 > 澆水。
     if (blockedPick) {
       hints.push('倉庫沒空位，暫停收地上的東西、果樹、魚、機器成品、蜂蜜、肉用動物');
-      if (CONFIG.autoSell) needSell = true; // 賣掉設定的作物騰出空間
+      if (CONFIG.autoSell) wantSell = true; // 賣掉設定的作物騰出空間
     }
     // 撿糞便、收動物產物、採果樹、收機器、撿雜物都用「收成」工具（hand）：實測用「播種」工具點動物格子不會收；
     // 機器則一定會跳小選單（要再按「收成」）。魚池用「播種」工具直接收，用收成工具會跳小選單。
@@ -1162,6 +1218,8 @@
       hand: handQueue.length > 0,
       water: waters.length + tilts.length > 0, // 扶正也用澆水工具
     };
+    if (dry) return { work: Object.values(work).some(Boolean), needSell: wantSell };
+    if (wantSell) needSell = true;
     const tool = S.sel.tool;
     const pickMode = () => (work[tool] ? tool : ['care', 'seed', 'hand', 'water'].find((m) => work[m]));
     let mode = pickMode();
@@ -1173,7 +1231,8 @@
         work.care = false;
         mode = pickMode();
       } else if (!r) {
-        return switching('照顧／捉蟲');
+        switching('照顧／捉蟲');
+        return { work: true };
       }
     }
     if (!mode) {
@@ -1182,20 +1241,26 @@
         hints.push(growing + ' 格' + targetCrop.name + '還在長，最快約 ' + fmtSec(minLeft) + ' 後成熟');
       }
       setStatus('運作中（暫時沒有事做）' + (hints.length ? '｜' + hints.join('｜') : ''));
-      return;
+      return { work: false, needSell: wantSell };
     }
 
     let queue;
     if (mode === 'care') {
       queue = pests.map((k) => [k, 'pest']);
     } else if (mode === 'water') {
-      if (!ensureToolIs(g, 'water')) return switching('澆水');
+      if (!ensureToolIs(g, 'water')) {
+        switching('澆水');
+        return { work: true };
+      }
       queue = waters.map((k) => [k, 'water']).concat(tilts);
     } else if (mode === 'hand') {
-      if (!ensureToolIs(g, 'hand')) return switching('收成');
+      if (!ensureToolIs(g, 'hand')) {
+        switching('收成');
+        return { work: true };
+      }
       queue = handQueue;
     } else {
-      if (!prepareTool(g)) return; // prepareTool 自己會寫明是在切工具、還是種子用不了
+      if (!prepareTool(g)) return { work: true }; // prepareTool 自己會寫明是在切工具、還是種子用不了
       queue = harvests.map((k) => [k, 'harvest']).concat(plants.map((k) => [k, 'plant']), pools);
     }
 
@@ -1336,9 +1401,9 @@
       }
 
       // 同一格連續做同一種動作都沒成功（例如金幣不夠、剛噴過農藥）：退避越來越久，避免狂點與洗版提示
-      const prev = cooldown.get(k);
+      const prev = cooldown.get(ck(k));
       const fails = ok ? 0 : prev && prev.kind === kind ? prev.fails + 1 : 0;
-      cooldown.set(k, {
+      cooldown.set(ck(k), {
         kind,
         fails,
         until: Date.now() + (ok ? 300 : Math.min(60000, 1500 * Math.pow(2, fails))),
@@ -1350,6 +1415,204 @@
     }
 
     setStatus('運作中' + (hints.length ? '｜' + hints.join('｜') : ''));
+    return { work: true };
+  }
+
+  // ───────────────────────── 多座島 ─────────────────────────
+  //
+  // 遊戲裡所有島都一直在運作（作物照長、動物照生產、雜草照長），但「點擊」只作用在畫面上顯示的那座；
+  // 換島的方式是點右側的「農場 N」按鈕（和玩家點的一樣：只換顯示的島、重新對焦鏡頭）。
+  // islandMode = 'all' 時腳本自己切島：
+  //   - 先「乾跑」規劃每座島（不動任何東西）判斷有沒有事做，只切去真的有事做的島；
+  //   - 目前這座沒事做才離開；一座島占用太久（maxStayMs）、或有事做卻卡住沒進展（stuckMs）也讓出去；
+  //   - 切過去之後這個週期不動手，下個週期重新規劃（不拿舊計畫去點新的島）；
+  //   - 切過去卻什麼都沒做成的島，隔越來越久才再考慮（islandRetryMs 起算、加倍、最久 5 分鐘）；
+  //   - 都沒事做了就回「家島」（按開始時看的那座、或你最後手動切到的那座）；
+  //   - 你手動切島時，那座就是家島，userSwitchHoldMs 內不自己切走；
+  //   - 目前選的工具不是腳本用的四種（可能是你的建造、移除…）時，先切到收成工具才切島，
+  //     不讓你的下一次點擊落在別座島上。
+  const SCRIPT_TOOLS = ['hand', 'seed', 'water', 'care'];
+
+  function resetIslands(S) {
+    islandSave = S;
+    homeIsland = null;
+    expectedCur = null;
+    holdUntil = 0;
+    stayStart = 0;
+    progressAt = 0;
+    seenAction = lastActionAt;
+    arrivalAction = lastActionAt;
+    lastHopAt = 0;
+    islandState.clear();
+    cooldown.clear(); // 冷卻、澆水記錄的鍵是「島編號|座標」，換存檔後就對不上了
+    wetting.clear();
+    partsBlocked.clear();
+    partsWhy.clear();
+  }
+
+  const islandReady = (mi) => {
+    const st = islandState.get(mi);
+    return !(st && st.until > Date.now());
+  };
+
+  function backoffIsland(mi) {
+    const st = islandState.get(mi) || { fails: 0, until: 0 };
+    st.fails += 1;
+    st.until = Date.now() + Math.min(300000, CONFIG.islandRetryMs * Math.pow(2, st.fails - 1));
+    islandState.set(mi, st);
+  }
+
+  // 整理島嶼狀態（每個週期一次）。回傳 true＝由腳本輪流切島（全島模式且有 2 座以上）
+  function islandTrack(g) {
+    const { S } = g;
+    const n = S.maps.length;
+    const now = Date.now();
+    if (islandSave !== S || n < islandCount) resetIslands(S);
+    islandCount = n;
+    const arrive = () => {
+      stayStart = now;
+      progressAt = now;
+      arrivalAction = lastActionAt;
+      seenAction = lastActionAt;
+    };
+    if (expectedCur === null || expectedCur >= n) {
+      expectedCur = S.cur;
+      homeIsland = S.cur;
+      arrive();
+    }
+    if (S.cur !== expectedCur) {
+      // 目前顯示的島不是腳本切過去的：玩家手動切了。那座就是家島，一陣子內不自己切走
+      expectedCur = S.cur;
+      homeIsland = S.cur;
+      holdUntil = now + CONFIG.userSwitchHoldMs;
+      arrive();
+    }
+    const multi = CONFIG.islandMode === 'all' && n > 1;
+    if (!multi) {
+      homeIsland = S.cur; // 只做這座：玩家看哪座就處理哪座；之後切回全島輪流時，就以那座當家島
+      expectedCur = S.cur;
+    }
+    if (n < 2) {
+      islandHint = '';
+      islandLine = '';
+      islandShort = '';
+    } else if (!multi) {
+      islandHint = '共 ' + n + ' 座島，只處理畫面上的第 ' + (S.cur + 1) + ' 座（' + keyLabel(CONFIG.islandKey) + ' 切到全島輪流）';
+      islandLine = '島 ' + (S.cur + 1) + '/' + n + '｜只做這座（' + keyLabel(CONFIG.islandKey) + ' 切換）';
+      islandShort = '島' + (S.cur + 1) + '/' + n;
+    } else {
+      const away = homeIsland !== S.cur ? '（家島 ' + (homeIsland + 1) + '）' : '';
+      const held = now < holdUntil ? '，你剛切島，先不自己切走' : '';
+      islandHint = '島 ' + (S.cur + 1) + '/' + n + away + held;
+      islandLine = '島 ' + (S.cur + 1) + '/' + n + '｜全島輪流（家 ' + (homeIsland + 1) + '）｜切島 ' + stats.hops + ' 次';
+      islandShort = '島' + (S.cur + 1) + '/' + n;
+    }
+    return multi;
+  }
+
+  // 這座島現在有沒有事做（乾跑規劃，不動任何東西），以及規劃時看到的「要先賣出」
+  function islandPlan(g, mi) {
+    const r = doFields(g, mi, true) || {};
+    let work = !!r.work;
+    if (!work && CONFIG.autoSwapParts) {
+      // 有機器人在等耗材，而且那種充電樁在這座島上（沒在暫停重試）：也是有事做
+      const now = Date.now();
+      work = partNeeds(g).some((nd) => !(partsBlocked.get(nd.base) > now) && baseOnIsland(g, mi, nd.base));
+    }
+    return { work, needSell: !!r.needSell };
+  }
+
+  // 乾跑其他島，並把「要先賣出」套用到全域（倉庫、金幣是全島共用的）
+  function planOthers(g) {
+    const plans = {};
+    for (let mi = 0; mi < g.S.maps.length; mi++) {
+      if (mi === g.S.cur) continue;
+      plans[mi] = islandPlan(g, mi);
+      if (plans[mi].needSell && CONFIG.autoSell) needSell = true;
+    }
+    return plans;
+  }
+
+  // 下一座要去的島：從目前這座的下一座往後找，第一個「沒被略過、沒在暫停、有事做」的
+  function nextIsland(g, plans) {
+    const n = g.S.maps.length;
+    for (let i = 1; i < n; i++) {
+      const mi = (g.S.cur + i) % n;
+      if (CONFIG.skipIslands.includes(mi + 1) || !islandReady(mi)) continue;
+      if (plans[mi] && plans[mi].work) return mi;
+    }
+    return null;
+  }
+
+  // 切到第 mi 座島。回傳 'busy'（這個週期用在切工具上）、'hopped'（切過去了）、'failed'（切不過去，那座島先暫停）
+  function hopTo(g, mi, why) {
+    const { S } = g;
+    if (!SCRIPT_TOOLS.includes(S.sel.tool) && !ensureToolIs(g, 'hand')) {
+      setStatus('切換工具中（切島前）…');
+      return 'busy';
+    }
+    const btn = document.querySelector('#maps button[data-map="' + mi + '"]');
+    if (btn) btn.click();
+    if (S.cur !== mi) {
+      backoffIsland(mi);
+      setStatus('切不到第 ' + (mi + 1) + ' 座島，先暫停去那座');
+      return 'failed';
+    }
+    const now = Date.now();
+    expectedCur = mi;
+    stayStart = now;
+    progressAt = now;
+    arrivalAction = lastActionAt;
+    seenAction = lastActionAt;
+    lastHopAt = now;
+    stats.hops += 1;
+    setStatus('切到第 ' + (mi + 1) + ' 座島（' + why + '）');
+    return 'hopped';
+  }
+
+  // 這個週期在目前這座島做完（或沒事做）之後：決定要不要切島。回傳 true＝這個週期已經用掉了（切了島或在切工具）
+  function islandAfter(g, r, plans) {
+    const { S } = g;
+    const now = Date.now();
+    const cur = S.cur;
+    if (lastActionAt !== seenAction) {
+      seenAction = lastActionAt;
+      progressAt = now;
+    }
+    if (now < holdUntil || now - lastHopAt < CONFIG.islandHopMinMs) return false;
+    let target = null;
+    let why = '';
+    if (r.work) {
+      // 有事做就留著；占用太久、或有事做卻一直沒做成（卡住）才讓出去
+      const overstay = now - stayStart >= CONFIG.maxStayMs;
+      const stuck = now - progressAt >= CONFIG.stuckMs;
+      if (!overstay && !stuck) return false;
+      if (stuck) backoffIsland(cur);
+      target = nextIsland(g, plans);
+      why = stuck ? '這座卡住了' : '輪到下一座';
+      if (target === null && stuck && CONFIG.returnHome && homeIsland !== null && cur !== homeIsland && homeIsland < S.maps.length) {
+        target = homeIsland; // 卡住的不是家島、又沒有別座有事做：回家島，不要停在卡住的島上
+        why = '這座卡住了，回家島';
+      }
+      if (target === null) {
+        if (overstay) stayStart = now; // 沒有別座島有事做：留著，過一陣子再看
+        return false;
+      }
+    } else {
+      // 沒事做：不是家島的話，看這趟有沒有做成事（沒有就暫停這座島一陣子，有就清掉失敗記錄）
+      if (cur !== homeIsland) {
+        if (lastActionAt <= arrivalAction) backoffIsland(cur);
+        else islandState.delete(cur);
+      }
+      target = nextIsland(g, plans);
+      why = '那座有事做';
+      if (target === null && CONFIG.returnHome && homeIsland !== null && cur !== homeIsland && homeIsland < S.maps.length) {
+        target = homeIsland;
+        why = '回家島';
+      }
+    }
+    if (target === null) return false;
+    return hopTo(g, target, why) !== 'failed';
   }
 
   async function tick() {
@@ -1400,6 +1663,10 @@
       return;
     }
 
+    // 多座島：整理狀態，並乾跑其他島（判斷有沒有事做、順便套用「要先賣出」）
+    const multi = islandTrack(g);
+    const plans = multi ? planOthers(g) : null;
+
     const info = storageInfo(g);
     const nearlyFull =
       (info.free !== null && info.free <= CONFIG.sellWhenFreeAtMost) ||
@@ -1426,7 +1693,8 @@
       partsHint = '';
     }
 
-    doFields(g);
+    const r = doFields(g, g.S.cur) || { work: false };
+    if (multi && islandAfter(g, r, plans)) return;
   }
 
   function onTick() {
@@ -1458,6 +1726,7 @@
       partsBlocked.clear();
       partsWhy.clear();
       partsHint = '';
+      islandSave = null; // 下個週期重新整理島嶼狀態：開始時看的那座就是家島
       status = '啟動中';
       timer = setInterval(onTick, CONFIG.tickMs);
     } else {
@@ -1517,6 +1786,7 @@
       [CONFIG.toggleKey, '開關'],
       [CONFIG.cropKey, '作物'],
       [CONFIG.probeKey, '診斷'],
+      [CONFIG.islandKey, '島嶼'],
     ];
     const mod = (k) => [k.ctrl && 'Ctrl', k.alt && 'Alt', k.shift && 'Shift'].filter(Boolean).join('+');
     const letter = (k) => k.code.replace(/^Key/, '');
@@ -1550,12 +1820,12 @@
         width: '52px',
         height: '52px',
         padding: '0',
-        font: '700 12px/1.3 sans-serif',
+        font: '700 11px/1.25 sans-serif',
         textAlign: 'center',
       });
       badge.title =
         (enabled ? status || '運作中' : '自動：OFF（' + keyLabel(CONFIG.toggleKey) + ' 開啟）') + '\n點一下展開';
-      badge.textContent = enabled ? (paused ? '暫停' : 'ON') + '\n✓' + totalActions() : 'OFF';
+      badge.textContent = enabled ? (paused ? '暫停' : 'ON') + '\n✓' + totalActions() + (islandShort ? '\n' + islandShort : '') : 'OFF';
       lastRenderAt = Date.now();
       return;
     }
@@ -1586,6 +1856,7 @@
           '｜餵食 ' + stats.feed
       );
       lines.push('蜂蜜 ' + stats.honey + '｜出貨 ' + stats.meat + '｜換耗材 ' + stats.parts);
+      if (islandLine) lines.push(islandLine);
       // 上一次真的做成事的時間：數字不動、又一直很久以前，就是停住了，看下一行的原因
       lines.push(lastActionAt ? '上次動作：' + fmtSec((Date.now() - lastActionAt) / 1000) + '前' : '開啟後還沒做成任何事');
       if (status) lines.push(status);
@@ -1623,6 +1894,24 @@
       height: c.height,
       rect: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) },
     };
+  }
+
+  // 診斷用：每座島的雜草、糞便、成熟作物、有產物的動物數，以及乾跑規劃的結果（有沒有事做）
+  function islandsInfo(g) {
+    const { S, CFG } = g;
+    return S.maps.map((M, mi) => {
+      const o = { island: mi + 1, weeds: 0, poop: 0, ripe: 0, animalsWithProduct: 0 };
+      for (const k in (M && M.tiles) || {}) {
+        const T = M.tiles[k];
+        if (!T) continue;
+        if (T.t === 'weed' || T.t === 'weedball') o.weeds += 1;
+        else if (T.t === 'poop') o.poop += 1;
+        else if (T.t === 'soil' && isRipe(T, CFG)) o.ripe += 1;
+        else if (T.t === 'animal' && T.stack > 0) o.animalsWithProduct += 1;
+      }
+      o.hasWork = islandPlan(g, mi).work;
+      return o;
+    });
   }
 
   // 診斷用：幾台機器人在等耗材（依耗材分）、倉庫裡對應的備品數
@@ -1732,7 +2021,8 @@
       targetCrop: targetCrop ? targetCrop.id : null,
       storage: { used: info.used, cap: info.cap, free: info.free },
       weedStock: (S.inv && S.inv.weed) || 0, // 倉庫裡的雜草（賣出設定作物時一併賣掉）
-      maps: { total: S.maps.length, current: S.cur + 1 }, // 腳本只處理畫面上的這一座島
+      maps: { total: S.maps.length, current: S.cur + 1, mode: CONFIG.islandMode, home: homeIsland === null ? null : homeIsland + 1 },
+      islands: islandsInfo(g), // 每座島的概況與「現在有沒有事做」
       expandMode: isExpandMode(), // 遊戲的擴地模式開著時腳本會暫停
       robotParts: robotPartsInfo(g), // 等耗材的機器人台數（依耗材分）與倉庫備品
       inventoryByCategory: inv,
@@ -1778,7 +2068,11 @@
         '｜蜂蜜 ' + G.hives.jars + ' 罐' +
         '\n雜草：地上 ' + G.ground.weed + '（草球 ' + G.ground.weedball + '）｜倉庫 ' + G.weedStock + ' 個｜空位 ' + G.storage.free + '（拔雜草要留 ' + CONFIG.weedKeepFree + '）' +
         '\n島 ' + G.maps.current + '/' + G.maps.total + (G.expandMode ? '｜擴地模式中（腳本暫停）' : '') +
-        '｜等耗材的機器人 ' + G.robotParts.total + ' 台'
+        '｜等耗材的機器人 ' + G.robotParts.total + ' 台' +
+        (G.maps.total > 1
+          ? '\n島嶼：' + (G.maps.mode === 'all' ? '全島輪流' : '只做這座') + '｜有事做：' +
+            (G.islands.filter((i) => i.hasWork).map((i) => i.island).join('、') || '沒有')
+          : '')
       : '診斷：遊戲介面還沒載入';
 
     if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -1948,6 +2242,16 @@
     renderBadge(false);
   }
 
+  // 全島輪流 ⇄ 只做畫面上這座（只存在記憶體，重新整理頁面就恢復預設）
+  function toggleIslandMode() {
+    CONFIG.islandMode = CONFIG.islandMode === 'all' ? 'current' : 'all';
+    holdUntil = 0;
+    setNote(
+      CONFIG.islandMode === 'all' ? '島嶼模式：全島輪流（腳本會自己切島）' : '島嶼模式：只做畫面上這座',
+      4000
+    );
+  }
+
   // 開啟自動功能前一定要先有設定作物
   function requestToggle() {
     if (enabled) setEnabled(false);
@@ -1965,11 +2269,13 @@
       const isToggle = matchKey(e, CONFIG.toggleKey);
       const isCrop = matchKey(e, CONFIG.cropKey);
       const isProbe = matchKey(e, CONFIG.probeKey);
-      if (!isToggle && !isCrop && !isProbe) return;
+      const isIsland = matchKey(e, CONFIG.islandKey);
+      if (!isToggle && !isCrop && !isProbe && !isIsland) return;
       e.preventDefault();
       e.stopImmediatePropagation();
       if (isProbe) runProbe();
       else if (panel) closePanel(); // 輸入框開著時，開關鍵與設定鍵都當作「取消」
+      else if (isIsland) toggleIslandMode();
       else if (isCrop) openCropPanel(false);
       else requestToggle();
     },

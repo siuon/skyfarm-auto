@@ -44,6 +44,7 @@ module.exports = {
     { prefix: 'button[data-oe2543="tile"]', game: ['data-oe2543="tile"'] }, // 「這一格有：」選單
     { prefix: 'button[data-ck248="feed"]', game: ['data-ck248'] }, // 餓了的雞鴨小選單
     { prefix: 'button[data-m61="', game: ['data-m61'] }, // 機器小選單
+    { prefix: '#maps button[data-map="', game: ['id="maps"', 'data-map='] }, // 右側「農場 N」切島按鈕（多座島）
     { prefix: '#modalBody .sw84 button[data-sw84]', game: ['sw84', 'data-sw84'] }, // 重型機器人「要換耗材」卡片的按鈕
     { prefix: '#modalBody .sw84', game: ["box.className = 'pcard span2 sw84'"] },
     { prefix: '#modalBody .partcard button[data-part="', game: ['data-part="${id}" data-q="${q}"'] }, // 「耗材」卡片的「買 1／5／10」
@@ -64,6 +65,17 @@ module.exports = {
         'if (UI.expand){ tryExpandAt(x, y); return; }',
         'S.sel.tool = id; UI.expand = false;',
         "else if (UI.expand){ UI.expand = false; renderHUD(); }",
+      ],
+    },
+    {
+      name: '多座島：所有島一直在運作，但點擊只作用在目前顯示的島；點「農場 N」切島（只換 S.cur、結束擴地模式）；動物位置只在顯示的那座更新',
+      game: [
+        "$('maps').addEventListener('click', e => { const b = e.target.closest('button[data-map]'); if (!b) return; S.cur = +b.dataset.map; UI.expand = false; fitCamera(); renderHUD(); });",
+        "const curMap = () => S.maps[S.cur];",
+        "const maps = S.maps.map((M,i) => `<button class=\"${i === S.cur ? 'on' : ''}\" data-map=\"${i}\">農場 ${i+1}</button>`).join('');",
+        "function animalAwayFrom(k){ const ag = RT.agents && RT.agents[`${S.cur}:${k}`];",
+        "const mi = S.cur, reg = regionsFor(mi), dt = Math.min(.1, RT.frameDt || .016);",
+        'const bonus = bonusMap(mi), cover = S.snow.cover, G = M.glass || {};',
       ],
     },
     { name: '動物走離家時點牠的家無效，要有 lastAnimalTap 記號', game: ['function animalAwayFrom', 'lastAnimalTap', 'lastAnimalTapAt'] },

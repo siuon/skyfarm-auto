@@ -108,21 +108,21 @@ test('只有一座島：標籤沒有島嶼提醒', async () => {
   assert.ok(!/座島/.test(ctx.t.status), ctx.t.status);
 });
 
-test('有兩座島：標籤提醒「共 2 座島，只處理畫面上的第 1 座」；切到第 2 座就寫第 2 座', async () => {
-  const ctx = boot({ tiles: { '0,0': soil({ m: 3, crop: { id: 'wheat', prog: 1, pest: false } }) } });
-  ctx.world.S.maps.push({ blocks: [[0, 0]], tiles: { '0,0': weed() }, pools: {} });
+// 「只做畫面上這座」模式（islandMode: 'current'，Alt+Shift+M 切換）：2026-11-15 的舊行為，留作這個模式的測試
+test('只做這座模式、有兩座島：標籤提醒「共 2 座島，只處理畫面上的第 1 座」；你手動切到第 2 座就寫第 2 座', async () => {
+  const ctx = boot({ tiles: { '0,0': soil({ m: 3, crop: { id: 'wheat', prog: 1, pest: false } }) }, maps: [{ tiles: { '0,0': weed() } }] }, { flags: { islandMode: 'current' } });
   await run(ctx, 2);
-  assert.match(ctx.t.status, /共 2 座島，只處理畫面上的第 1 座/);
-  ctx.world.S.cur = 1;
+  assert.match(ctx.t.status, /共 2 座島，只處理畫面上的第 1 座（Alt\+Shift\+M 切到全島輪流）/);
+  ctx.world.S.cur = 1; // 玩家手動切島
   await run(ctx, 2);
   assert.match(ctx.t.status, /共 2 座島，只處理畫面上的第 2 座/);
 });
 
-test('只處理畫面上的島：另一座島的雜草不會被點', async () => {
-  const ctx = boot({ tiles: { '5,5': soil() }, cap: 100 });
-  ctx.world.S.maps.push({ blocks: [[0, 0]], tiles: { '0,0': weed() }, pools: {} });
-  await run(ctx, 4);
+test('只做這座模式：另一座島的雜草不會被點，也不會去按切島按鈕', async () => {
+  const ctx = boot({ tiles: { '5,5': soil() }, cap: 100, maps: [{ tiles: { '0,0': weed() } }] }, { flags: { islandMode: 'current' } });
+  await run(ctx, 6);
   assert.deepEqual(ctx.world.acts.map((a) => a.k).filter((k) => k === '0,0'), [], '沒有對另一座島的格子動手');
+  assert.deepEqual(ctx.world.switches, [], '沒有按「農場 N」');
   assert.ok(ctx.world.S.maps[1].tiles['0,0'], '另一座島的雜草還在');
 });
 
@@ -132,14 +132,16 @@ test('診斷：倉庫雜草數、島嶼、擴地模式；摘要有雜草與島�
   const ctx = boot({ tiles: { '0,0': weed(), '1,0': { t: 'weedball', n: 3 } }, cap: 200, inv: { weed: 12 } }, { enable: false });
   let g = ctx.t.describeGame();
   assert.equal(g.weedStock, 12);
-  assert.deepEqual({ ...g.maps }, { total: 1, current: 1 });
+  assert.equal(g.maps.total, 1);
+  assert.equal(g.maps.current, 1);
   assert.equal(g.expandMode, false);
   assert.equal(g.ground.weed, 1);
   assert.equal(g.ground.weedball, 1);
   ctx.world.S.maps.push({ blocks: [[0, 0]], tiles: {}, pools: {} });
   ctx.world.setExpand(true);
   g = ctx.t.describeGame();
-  assert.deepEqual({ ...g.maps }, { total: 2, current: 1 });
+  assert.equal(g.maps.total, 2);
+  assert.equal(g.maps.current, 1);
   assert.equal(g.expandMode, true);
   ctx.env.key('KeyD');
   await ctx.clock.advance(0);
