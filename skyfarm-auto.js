@@ -206,6 +206,8 @@
   let seenAction = 0;
   let arrivalAction = 0; // 到達這座島時的 lastActionAt（離開時看有沒有做成事）
   let lastHopAt = 0;
+  let lastTrackAt = 0; // 上一次整理島嶼狀態（沒被暫停閘門擋掉的週期）的時間
+  let stuckMarked = false; // 這次卡住是否已經記過一次失敗
   const islandState = new Map(); // 島編號 → { fails, until }：切過去沒做成事的島，暫停到什麼時候
   let islandHint = ''; // 寫在狀態列的島嶼說明
   let islandLine = ''; // 完整標籤的島嶼那一行
@@ -1432,6 +1434,7 @@
   //   - 目前選的工具不是腳本用的四種（可能是你的建造、移除…）時，先切到收成工具才切島，
   //     不讓你的下一次點擊落在別座島上。
   const SCRIPT_TOOLS = ['hand', 'seed', 'water', 'care'];
+  const TRACK_GAP_MS = 8000; // 兩次整理島嶼狀態相隔超過這麼久，就當作中間被暫停過（賣出、換耗材最久約幾秒）
 
   function resetIslands(S) {
     islandSave = S;
@@ -1443,6 +1446,8 @@
     seenAction = lastActionAt;
     arrivalAction = lastActionAt;
     lastHopAt = 0;
+    lastTrackAt = 0;
+    stuckMarked = false;
     islandState.clear();
     cooldown.clear(); // 冷卻、澆水記錄的鍵是「島編號|座標」，換存檔後就對不上了
     wetting.clear();
@@ -1469,9 +1474,18 @@
     const now = Date.now();
     if (islandSave !== S || n < islandCount) resetIslands(S);
     islandCount = n;
+    // 腳本被暫停（玩家開了視窗、擴地模式、搬移物件…）或這個週期被賣出、換耗材占用很久：那段時間不能算成「沒進展」或「占用」，
+    // 不然玩家一關視窗，腳本就以為這座島卡住了、馬上切走。
+    if (lastTrackAt && now - lastTrackAt > TRACK_GAP_MS) {
+      stayStart = now;
+      progressAt = now;
+      stuckMarked = false;
+    }
+    lastTrackAt = now;
     const arrive = () => {
       stayStart = now;
       progressAt = now;
+      stuckMarked = false;
       arrivalAction = lastActionAt;
       seenAction = lastActionAt;
     };
@@ -1562,6 +1576,7 @@
     expectedCur = mi;
     stayStart = now;
     progressAt = now;
+    stuckMarked = false;
     arrivalAction = lastActionAt;
     seenAction = lastActionAt;
     lastHopAt = now;
@@ -1578,6 +1593,7 @@
     if (lastActionAt !== seenAction) {
       seenAction = lastActionAt;
       progressAt = now;
+      stuckMarked = false;
     }
     if (now < holdUntil || now - lastHopAt < CONFIG.islandHopMinMs) return false;
     let target = null;
@@ -1587,7 +1603,10 @@
       const overstay = now - stayStart >= CONFIG.maxStayMs;
       const stuck = now - progressAt >= CONFIG.stuckMs;
       if (!overstay && !stuck) return false;
-      if (stuck) backoffIsland(cur);
+      if (stuck && !stuckMarked) {
+        stuckMarked = true; // 同一次卡住只記一次失敗（不然沒地方可去時每個週期都加一次，退避時間會無限拉長）
+        backoffIsland(cur);
+      }
       target = nextIsland(g, plans);
       why = stuck ? '這座卡住了' : '輪到下一座';
       if (target === null && stuck && CONFIG.returnHome && homeIsland !== null && cur !== homeIsland && homeIsland < S.maps.length) {

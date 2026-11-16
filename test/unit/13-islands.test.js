@@ -34,7 +34,6 @@ test('沒事做的島永遠不會被切過去：兩座島都只有還在長的�
   const ctx = boot({ tiles: { '0,0': growing() }, maps: [{ tiles: { '1,0': growing() } }, { tiles: { '2,0': growing() } }] });
   await run(ctx, 12);
   assert.deepEqual(ctx.world.switches, []);
-  assert.equal(ctx.world.acts.length > 0 || true, true);
 });
 
 test('三座島：從目前這座的下一座往後找有事做的，做完一座再去下一座，最後回家島', async () => {
@@ -230,11 +229,12 @@ test('乾跑規劃別座島：不點、不寫標籤、不動澆水記錄、不�
   assert.equal(ctx.world.toolBtn.hand.clicks + ctx.world.toolBtn.water.clicks + ctx.world.toolBtn.seed.clicks + ctx.world.toolBtn.care.clicks, 0, '沒有切工具');
 });
 
-test('別座島的「要先賣出」會套用到全域（倉庫、金幣共用）：第 2 座有空田但金幣不夠，賣掉倉庫的小麥換種子，而且不需要切過去', async () => {
+test('別座島的「要先賣出」會套用到全域（倉庫、金幣共用）：第 2 座有空田但金幣不夠，在家島就賣掉倉庫的小麥換種子（還沒切過去）', async () => {
   const ctx = boot({ tiles: { '0,0': growing() }, maps: [{ tiles: { '1,0': soil() } }], coins: 0, cap: 1000, inv: { wheat: 5 } });
-  await run(ctx, 4);
+  await step(ctx); // 第一個週期：乾跑發現第 2 座缺種子錢 → 賣出流程（這個週期就用在賣出上）
   assert.deepEqual(ctx.world.storageUI.sold.map(([id]) => id), ['wheat']);
-  assert.deepEqual(ctx.world.switches.slice(0, 0), []);
+  assert.deepEqual(ctx.world.switches, [], '賣出是在家島觸發的，還沒切到第 2 座');
+  assert.equal(ctx.world.S.player.coins, 5 * 15);
 });
 
 test('冷卻的鍵帶島編號：第 1 座某格在冷卻中，第 2 座同座標的格子不受影響', async () => {
@@ -335,4 +335,35 @@ test('切過去發現其實沒事做（乾跑說有蟲要抓，但捉蟲工具�
   assert.deepEqual(ctx.world.switches, [1, 0], '去了一次、回來一次，之後不再切過去');
   assert.equal(ctx.world.S.cur, 0);
   assert.match(ctx.t.status, /(捉蟲工具無法使用|島 1\/2)/);
+});
+
+// ───── 暫停時間不能算成「沒進展」（顧問審查提出的缺口）─────
+
+test('玩家開視窗很久（超過 stuckMs）：關掉視窗後，腳本不會誤以為這座島卡住了而馬上切走', async () => {
+  // 家島有事做但要先切工具（這種週期做不成任何事）；第 2 座也有事做
+  const ctx = boot(
+    { tiles: { '0,0': soil() }, maps: [{ tiles: { '1,0': weed() } }], coins: 1000, lockedTray: [] },
+    { flags: { stuckMs: 3000, maxStayMs: 3000, islandHopMinMs: 0 } }
+  );
+  await step(ctx); // 整理好島嶼狀態（家島有播種的事做）
+  const hops0 = ctx.world.switches.length;
+  ctx.world.modal.hidden = false;
+  ctx.world.modalTitle.textContent = '每日簽到';
+  await run(ctx, 10, 2000); // 玩家開著視窗 20 秒：整個週期暫停
+  ctx.world.modal.hidden = true;
+  ctx.world.S.sel.tool = 'water'; // 關掉後工具不對，第一個週期只是切工具（沒有做成事）
+  ctx.world.S.maps[0].tiles['0,0'] = soil();
+  await step(ctx);
+  assert.equal(ctx.world.switches.length, hops0, '關掉視窗的第一個週期不切島');
+  assert.equal(ctx.t.islandState.size, 0, '沒有把家島記成卡住');
+});
+
+test('沒地方可去的卡住：同一次卡住只記一次失敗，退避時間不會被每個週期加倍拉長', async () => {
+  const ctx = boot(
+    { tiles: { '0,0': soil() }, maps: [{ tiles: { '1,0': growing() } }], lockedTray: ['wheat'], coins: 1000 },
+    { flags: { stuckMs: 2000, islandHopMinMs: 0 } }
+  );
+  await run(ctx, 20, 1000);
+  assert.equal(ctx.world.switches.length, 0, '第 2 座沒事做、家島卡住：沒有地方可去');
+  assert.equal(ctx.t.islandState.get(0).fails, 1, '只記了一次');
 });
