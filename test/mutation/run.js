@@ -61,6 +61,7 @@ const MUTATIONS = [
   ['harvestOtherCrops 開關不再看', 'CONFIG.autoHarvest && CONFIG.harvestOtherCrops && isRipe(T, CFG)', 'CONFIG.autoHarvest && isRipe(T, CFG)'],
   ['魚池不再收成', 'pools.push([k, \'pool\', pk]);\n            room -= ps.harvestQty;', 'room -= ps.harvestQty;'],
   ['擴地模式時不再暫停（點擊會被遊戲吞掉）', 'if (isExpandMode()) {', 'if (false) {'],
+  ["寵物飼料：沒買成（金幣沒少）也算買成功","if (S.player.coins >= coinsBefore) {","if (false) {"],
   ["寵物飼料：不再守金幣底線","if (S.player.coins < j.price + CONFIG.minCoinsAfterBuyPetFood) {","if (false) {"],
   ["寵物飼料：autoBuyPetFood 開關不再看","if (CONFIG.autoBuyPetFood) {","if (true) {"],
   ["寵物飼料：一次買的次數上限被拿掉","const lots = Math.min(5, Math.max(1, Math.ceil((target - stock) / 10)));","const lots = Math.min(99, Math.max(1, Math.ceil((target - stock) / 10)));"],

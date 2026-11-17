@@ -715,14 +715,21 @@
             continue outer;
           }
           clicked = true;
+          const coinsBefore = S.player.coins;
           b.click();
           const r = await confirmPurchase(g, { titles: [j.name + ' ×10'], price: j.price, floor: CONFIG.minCoinsAfterBuyPetFood });
           if (!r.ok) {
             why = r.why;
             break outer;
           }
-          bought += 1;
           await sleep(250); // 買完遊戲會重畫商店頁，下一輪重新找按鈕
+          // 「沒跳確認視窗」有兩種可能：玩家勾過「以後不再詢問」（直接買了），或遊戲拒絕了這次點擊（例如它算的倉庫空位不夠 10 格，
+          // 只跳一個提示）。所以不能把「沒跳視窗」當成買成功：金幣真的少了才算買到，沒買到就停下來、當作沒進展（暫停後再試）。
+          if (S.player.coins >= coinsBefore) {
+            why = '點了「買 10 個」但沒有買成（遊戲拒絕了？倉庫放不下？）：' + j.name;
+            break outer;
+          }
+          bought += 1;
         }
       }
     } finally {

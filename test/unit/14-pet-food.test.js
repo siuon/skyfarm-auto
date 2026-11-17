@@ -239,3 +239,26 @@ test('預設值釘住（使用者 2026-11-17 要求：貓狗餓了自動餵）',
   assert.equal(C.minCoinsAfterBuyPetFood, 100);
   assert.equal(C.petFoodRetryMs, 60000);
 });
+
+// ───── 顧問審查提出的缺口：沒跳確認視窗不等於買成功 ─────
+
+test('遊戲拒絕了這次購買（它算的空位不夠 10 格，只跳提示）而腳本讀不到倉庫容量：不算買成功，不會每個週期重開倉庫', async () => {
+  const ctx = farm({ pets: [dog()], cap: 20, inv: { corn: 15 } }, { flags: { autoSell: false } });
+  ctx.world.CFG.items.corn = ctx.world.CFG.items.corn || { name: '玉米', category: 'crop', sellPrice: 105 };
+  // 腳本讀不到容量（free === null）：略過自己的「空位夠不夠」檢查，由遊戲自己拒絕
+  Object.defineProperty(ctx.doc.byId.get('storageText'), 'textContent', { get: () => '', configurable: true });
+  await run(ctx, 14, 1000); // 14 秒，在 60 秒的暫停期間內
+  assert.deepEqual(ctx.world.shopBuys, [], '遊戲拒絕，什麼都沒買到');
+  assert.equal(ctx.t.stats.petFood, 0, '沒買成就不算');
+  assert.equal(ctx.world.storageUI.opens, 1, '只開過一次倉庫，之後暫停');
+  assert.equal(ctx.world.modal.hidden, true);
+  assert.match(ctx.t.status, /點了「買 10 個」但沒有買成/);
+  assert.equal(ctx.t.lastActionAt, 0, '沒有把這種空轉當成「做成了事」（會騙過島嶼排程器的進展判斷）');
+});
+
+test('沒跳確認視窗但真的買到了（玩家勾過不再詢問）：照樣算買成功', async () => {
+  const ctx = farm({ pets: [dog()], noAsk: true });
+  await run(ctx, 4);
+  assert.equal(ctx.t.stats.petFood, 1);
+  assert.ok(ctx.t.lastActionAt > 0);
+});
