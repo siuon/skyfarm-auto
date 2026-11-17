@@ -196,6 +196,18 @@ test('設定 consumables 與 robots：耗材欄位、重型機器人手動換、
   assert.ok(!CFG.items.part_saw_chain.sellPrice, '耗材沒有售價（不會被賣出）');
 });
 
+test('設定 pets 與 feedShop：貓、狗吃的飼料品項、商店單價、物品名稱', () => {
+  assert.equal(CFG.pets.food.dog.item, 'dog_food', '腳本用 dog_food 當狗飼料的物品代號');
+  assert.equal(CFG.pets.food.cat.item, 'cat_food', '腳本用 cat_food 當貓飼料的物品代號');
+  assert.ok(isNum(CFG.pets.food.dog.everyHours) && isNum(CFG.pets.food.cat.everyHours));
+  for (const id of ['dog_food', 'cat_food']) {
+    assert.ok(isNum(CFG.feedShop[id]) && CFG.feedShop[id] > 0, id + ' 要在飼料商店賣（腳本用單價 × 10 核對確認視窗的價格）');
+    assert.equal(typeof CFG.items[id].name, 'string', id + ' 的物品名稱（確認視窗標題「名稱 ×10」要用）');
+    assert.equal(CFG.items[id].category, 'feed', id);
+  }
+  assert.ok(CFG.pets.dogs && CFG.pets.cats, '狗、貓的品種表在 pets.dogs／pets.cats');
+});
+
 test('設定：預設白名單與腳本的假設對得上（loadMachineIds、飼料品項）', () => {
   const { load } = require('../helpers/harness');
   const { t } = load();

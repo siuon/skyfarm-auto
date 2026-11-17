@@ -108,11 +108,11 @@ test('只有一座島：標籤沒有島嶼提醒', async () => {
   assert.ok(!/座島/.test(ctx.t.status), ctx.t.status);
 });
 
-// 「只做畫面上這座」模式（islandMode: 'current'，Alt+Shift+M 切換）：2026-11-15 的舊行為，留作這個模式的測試
+// 「只做畫面上這座」模式（islandMode: 'current'，Alt+Shift+F 切換）：2026-11-15 的舊行為，留作這個模式的測試
 test('只做這座模式、有兩座島：標籤提醒「共 2 座島，只處理畫面上的第 1 座」；你手動切到第 2 座就寫第 2 座', async () => {
   const ctx = boot({ tiles: { '0,0': soil({ m: 3, crop: { id: 'wheat', prog: 1, pest: false } }) }, maps: [{ tiles: { '0,0': weed() } }] }, { flags: { islandMode: 'current' } });
   await run(ctx, 2);
-  assert.match(ctx.t.status, /共 2 座島，只處理畫面上的第 1 座（Alt\+Shift\+M 切到全島輪流）/);
+  assert.match(ctx.t.status, /共 2 座島，只處理畫面上的第 1 座（Alt\+Shift\+F 切到全島輪流）/);
   ctx.world.S.cur = 1; // 玩家手動切島
   await run(ctx, 2);
   assert.match(ctx.t.status, /共 2 座島，只處理畫面上的第 2 座/);

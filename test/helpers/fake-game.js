@@ -27,6 +27,7 @@ function attachWorld(env, o = {}) {
     inv: Object.assign({}, o.inv || {}),
     settings: { autoBuyFeed: o.autoBuyFeed ?? true },
     fleet: JSON.parse(JSON.stringify(o.fleet || {})), // 機器人：{ 種類: [{ id, tier, on, needPart, wear… }] }
+    pets: JSON.parse(JSON.stringify(o.pets || [])), // 寵物：[{ kind: 'dog'|'cat', hungry… }]
   };
   const RT = { mv: null, agents: Object.assign({}, o.agents || {}), pick53: null, lastAnimalTap: null, lastAnimalTapAt: 0 };
   let M = S.maps[S.cur]; // 目前顯示的那座島（切島時換掉）
@@ -44,6 +45,7 @@ function attachWorld(env, o = {}) {
     toasts: [],
     // 機器人面板
     unitPanels: 0, swaps: 0, partBuys: [], partCoinsSpent: 0,
+    shopBuys: [], // 飼料商店買了什麼 [品項, 數量]
     askShown: 0, askCancelled: 0, askLog: [], // 購買確認視窗：跳出幾次、按了取消幾次、每次的標題與價格
   };
 
@@ -463,6 +465,43 @@ function attachWorld(env, o = {}) {
     }
   }
 
+  // ───── 倉庫的「飼料商店」分頁（官方 openStorage('shop')）：每種飼料有「買 10 個」「買 50 個」─────
+  // 寵物（貓、狗）的飼料由遊戲自己從倉庫扣：官方 stepPets 時間到了 petEat，倉庫有就餵、沒有就餓著
+  function feedPetsNow() {
+    for (const P of S.pets) {
+      if (!P.hungry) continue;
+      const item = P.kind === 'dog' ? 'dog_food' : 'cat_food';
+      if (take(item, 1)) P.hungry = false;
+    }
+  }
+  world.feedPetsNow = feedPetsNow;
+  function clearShop() {
+    for (const m of [doc._q1, doc._qa]) for (const key of Array.from(m.keys())) if (key.startsWith('#modalBody button[data-buy="')) m.delete(key);
+  }
+  function renderShop() {
+    clearShop();
+    for (const [id, price] of Object.entries(CFG.feedShop || {})) {
+      for (const q of [10, 50]) {
+        const b = new FakeEl(doc, 'button');
+        b.dataset.buy = id; b.dataset.q = String(q);
+        b.onclick = () => { // 官方：放不下提示、花金幣（先跳確認視窗）、進倉庫
+          const cost = q * price;
+          if (q > free()) { world.toasts.push('倉庫只剩 ' + free() + ' 格'); return; }
+          if (S.player.coins < cost) { world.toasts.push('金幣不夠'); return; }
+          askBuy(CFG.items[id].name + ' ×' + q, cost, () => {
+            S.player.coins -= cost; add(id, q); world.shopBuys.push([id, q]);
+            feedPetsNow(); renderShop();
+          });
+        };
+        doc.q1('#modalBody button[data-buy="' + id + '"][data-q="' + q + '"]', b);
+      }
+    }
+  }
+  const tabShop = new FakeEl(doc, 'button');
+  tabShop.dataset.k = 'shop';
+  tabShop.onclick = () => { tabShop.classList.add('on'); renderShop(); };
+  doc.q1('#modalTabs button[data-k="shop"]', tabShop);
+
   // ───── 倉庫視窗與批次賣出（腳本用 DOM 操作這一段）─────
   const ui = {
     selected: new Set(), confirmMissing: !!o.confirmMissing, noRows: !!o.noRows, opens: 0, sold: [],
@@ -540,7 +579,7 @@ function attachWorld(env, o = {}) {
     doc.q1('#modalBody tr[data-bs259] input.cb259', ui.rows.length ? ui.rows[0].cb : null);
     refreshBar();
   };
-  modalClose.onclick = () => { modal.hidden = true; modalTitle.textContent = ''; clearUnitPanel(); };
+  modalClose.onclick = () => { modal.hidden = true; modalTitle.textContent = ''; clearUnitPanel(); clearShop(); tabShop.classList.remove('on'); };
 
   // ───── 掛到 window（和官方遊戲公開的除錯介面同名）─────
   win.__farm18 = { get S() { return S; }, RT, act: (x, y) => act(x, y) };

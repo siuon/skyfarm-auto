@@ -54,7 +54,7 @@ function makeCfg() {
       beehive: { name: '蜂箱', kind: 'hive' },
       well: { name: '水井', kind: 'well' },
     },
-    feedShop: { pasture: 4, corn_cake: 6, fish_feed: 5 },
+    feedShop: { pasture: 4, corn_cake: 6, fish_feed: 5, dog_food: 8, cat_food: 6 },
     // 機器人與耗材（結構同官方設定；數字與官方一致，方便對照）
     buildings: {
       robot_charger: { name: '機器人充電站', size: [1, 1], serves: 'feed' },
@@ -99,6 +99,8 @@ function makeCfg() {
       poop: { name: '糞便', category: 'material', sellPrice: 0 },
       weed: { name: '雜草', category: 'material', sellPrice: 1 },
       // 耗材在官方倉庫的「耗材」分類，沒有售價（不能賣）
+      dog_food: { name: '狗飼料', category: 'feed', sellPrice: 4, shopOnly: true },
+      cat_food: { name: '貓飼料', category: 'feed', sellPrice: 3, shopOnly: true },
       part_wheel: { name: '輪子', category: 'part' },
       part_propeller: { name: '螺旋槳', category: 'part' },
       part_saw_chain: { name: '鋸鏈', category: 'part' },

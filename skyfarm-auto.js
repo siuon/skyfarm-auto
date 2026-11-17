@@ -3,7 +3,7 @@
  *
  * 由 Tampermonkey 透過 @require 載入（設定見 skyfarm-auto.loader.user.js）。
  *
- * 功能（0.14.0）：
+ * 功能（0.15.0）：
  *   - Alt+Shift+S：跳出輸入框，輸入「這次要自動種植的作物」（中文名稱或代號皆可）
  *   - Alt+Shift+A：開啟／關閉自動功能（每次載入頁面一律預設 OFF，不會記住 ON）；
  *                  還沒設定作物就按開啟時，會先跳出輸入框，確認後才開始
@@ -31,7 +31,7 @@
  *          倉庫裡的雜草沒有數量上限；賣出設定作物時會一併把倉庫裡的雜草賣掉（1 金幣一個，CONFIG.sellWeedsWithCrops）。
  *          雜草沒拔時，右下角標籤會寫剩幾格空位、要保留幾格。
  *          遊戲在「擴地模式」時所有點擊都被當成擴地，所以腳本偵測到就暫停（結束擴地模式才繼續）。
- *          有多座島時：預設「全島輪流」（CONFIG.islandMode = 'all'，Alt+Shift+M 切換成只做畫面上這座）。遊戲裡所有島一直在運作，
+ *          有多座島時：預設「全島輪流」（CONFIG.islandMode = 'all'，Alt+Shift+F 切換成只做畫面上這座）。遊戲裡所有島一直在運作，
  *          但點擊只作用在畫面上那座；腳本先乾跑規劃每座島（不動任何東西）判斷有沒有事做，只切去有事做的島（點右側「農場 N」，和你點的一樣），
  *          做完回「家島」（按開始時看的那座、或你最後手動切到的那座）。你手動切島時，那座就是家島，30 秒內不自己切走。
  *          切島會讓畫面跟著換、鏡頭重新對焦（你自己調的縮放會被重設）。細節見下方「多座島」一節。
@@ -47,6 +47,10 @@
  *          確認視窗，腳本核對買的東西、數量、價格都和預期一樣、買完金幣還夠，才按「確定購買」，對不上就按「取消」；
  *          絕不勾「以後不再詢問」（那會改你的遊戲設定）。一次最多買 4 個。面板是用「收成」工具點充電樁開的，做完一定關掉，
  *          只能換有充電樁的這座島的畫面；絕不碰「買機器人」「升級」等其他按鈕。
+ *      11. 貓、狗餓了（CONFIG.autoBuyPetFood）：貓、狗不能點牠餵食，牠們自己從倉庫扣狗飼料／貓飼料，沒有就餓著。
+ *          所以腳本保持庫存：庫存低於「隻數 × petFoodLowPerPet」或有寵物餓著，就開倉庫 → 飼料商店 → 買 10 份
+ *          （補到每隻 petFoodTargetPerPet 份，一次最多買 5 次；會花金幣，買完要剩 minCoinsAfterBuyPetFood 以上、倉庫放得下）。
+ *          遊戲先跳「確定要買嗎？」，核對標題、價格、金幣才按「確定購買」，絕不勾「以後不再詢問」。
  *       以下三項會用到你的資源，預設關閉，要用請改 CONFIG：
  *          autoWaterTrees（果樹也澆雨水）、autoFeedFish（用倉庫現有的飼料餵魚，不會自動買）、
  *          autoLoadMachines（機器自動投料，只投 loadMachineIds 裡的機器，成品庫存有上限）
@@ -77,7 +81,7 @@
   'use strict';
 
   const NAME = 'SkyFarmAuto';
-  const VERSION = '0.14.0';
+  const VERSION = '0.15.0';
   const BADGE_ID = 'skyfarm-auto-badge';
   const PANEL_ID = 'skyfarm-auto-panel';
 
@@ -87,7 +91,7 @@
     toggleKey: { code: 'KeyA', alt: true, shift: true, ctrl: false },
     cropKey: { code: 'KeyS', alt: true, shift: true, ctrl: false },
     probeKey: { code: 'KeyD', alt: true, shift: true, ctrl: false },
-    islandKey: { code: 'KeyM', alt: true, shift: true, ctrl: false }, // 切換「全島輪流／只做畫面上這座」
+    islandKey: { code: 'KeyF', alt: true, shift: true, ctrl: false }, // 切換「全島輪流／只做畫面上這座」
 
     tickMs: 400, // 每個週期的間隔（毫秒）
     maxActionsPerTick: 3, // 每個週期最多收成／播種幾格（遊戲每次操作都會存檔，不宜一次太多）
@@ -135,8 +139,14 @@
     minCoinsAfterBuyParts: 100, // 買耗材後至少要剩多少金幣（只有開了 buyPartsWhenShort 才用到）
     partsRetryMs: 60000, // 換耗材沒成功（沒備品、金幣不夠、這座島沒有充電樁…）時，隔多久才再試一次
 
+    autoBuyPetFood: true, // 貓、狗吃倉庫裡的狗飼料／貓飼料（遊戲自己扣），沒庫存就餓著；庫存不夠時到倉庫的「飼料商店」分頁買（會花金幣）
+    petFoodLowPerPet: 4, // 狗（貓）飼料的庫存低於「狗（貓）的隻數 × 這個數」，或有狗（貓）餓著，就補貨
+    petFoodTargetPerPet: 10, // 補貨補到每隻這麼多份（一次買 10 份，一次最多買 5 次）
+    minCoinsAfterBuyPetFood: 100, // 買飼料後至少要剩多少金幣
+    petFoodRetryMs: 60000, // 補貨沒成功（金幣不夠、倉庫沒空位…）時，隔多久才再試一次
+
     // 多座島：遊戲裡所有島一直在運作，但點擊只作用在畫面上那座；全島輪流時腳本自己點「農場 N」切島
-    islandMode: 'all', // 'all'＝腳本自己切島、輪流處理有事做的島；'current'＝只處理畫面上這座（Alt+Shift+M 切換）
+    islandMode: 'all', // 'all'＝腳本自己切島、輪流處理有事做的島；'current'＝只處理畫面上這座（Alt+Shift+F 切換）
     returnHome: true, // 其他島做完後切回「家島」（按開始時看的那座、或你最後手動切到的那座）
     maxStayMs: 60000, // 一座島連續占用超過這麼久、而別座島也有事做，就讓出去輪下一座
     stuckMs: 15000, // 這座島有事做、但這麼久都沒做成任何事（卡住了），就先去別座
@@ -183,7 +193,7 @@
 
   const newStats = () => ({
     harvest: 0, plant: 0, water: 0, pest: 0, pick: 0, sellRuns: 0,
-    clean: 0, fruit: 0, fish: 0, machine: 0, feed: 0, honey: 0, meat: 0, parts: 0, hops: 0,
+    clean: 0, fruit: 0, fish: 0, machine: 0, feed: 0, honey: 0, meat: 0, parts: 0, hops: 0, petFood: 0,
   });
   let stats = newStats();
   const wetting = new Set(); // 正在澆到目標濕度的格子（避免在門檻附近來回澆）
@@ -195,6 +205,8 @@
   const partsBlocked = new Map(); // 充電樁種類 → 換耗材沒成功時，暫停到什麼時候再試
   const partsWhy = new Map(); // 充電樁種類 → 還沒換成的原因（寫在右下角標籤上）
   let partsHint = '';
+  let petFoodBlockedUntil = 0; // 補寵物飼料沒成功時，暫停到什麼時候再試
+  let petFoodHint = ''; // 寫在狀態列的原因
   // 多座島（編號都從 0 起算）
   let islandSave = null; // 目前看到的存檔物件；換存檔就重設所有島嶼狀態
   let islandCount = 0;
@@ -593,8 +605,8 @@
   // 玩家若勾過「以後不再詢問」就不會跳。這裡只在核對過「買的東西、數量、價格」都和預期一樣、金幣也夠時才按「確定購買」，
   // 對不上就按「取消」；絕不碰「以後不再詢問」的勾選框（那會改玩家的遊戲設定）。
   // 回傳 { ok, why }；沒有跳視窗（玩家設了不再詢問）時 ok = true，由呼叫端看結果有沒有變。
-  async function confirmPartPurchase(g, buy) {
-    const P = partsOf(g.CFG)[buy.part] || {};
+  // expect = { titles: 視窗標題可以是哪幾種, price: 價格, floor: 買完金幣至少要剩多少 }
+  async function confirmPurchase(g, expect) {
     const ask = await waitFor(() => document.getElementById('ask47'), 800);
     if (!ask) return { ok: true };
     const yes = document.querySelector('#ask47 #ask47y');
@@ -607,9 +619,9 @@
     let why = '';
     if (document.querySelector('#ask47 .bs259')) why = '跳出的是賣出確認視窗，不按';
     else if (!yes || yes.disabled || !no) why = '購買確認視窗的按鈕不對（金幣不夠？）';
-    else if (title !== (P.name || '') + ' ×1' && title !== clean(buy.label).slice(0, 40)) why = '購買確認視窗買的東西和預期不同（' + title + '），不按';
-    else if (price !== buy.price) why = '購買確認視窗的價格和預期不同（' + (m ? m[1] : '看不出') + '），不按';
-    else if (g.S.player.coins - price < CONFIG.minCoinsAfterBuyParts) why = '買完金幣會低於 ' + CONFIG.minCoinsAfterBuyParts + '，不按';
+    else if (!expect.titles.filter(Boolean).includes(title)) why = '購買確認視窗買的東西和預期不同（' + title + '），不按';
+    else if (price !== expect.price) why = '購買確認視窗的價格和預期不同（' + (m ? m[1] : '看不出') + '），不按';
+    else if (g.S.player.coins - price < expect.floor) why = '買完金幣會低於 ' + expect.floor + '，不按';
     else if (noAsk && noAsk.checked) why = '「以後不再詢問」被勾起來了，不按';
     if (why) {
       if (no) no.click();
@@ -618,6 +630,129 @@
     yes.click();
     await sleep(300); // 遊戲關掉視窗後才真的買（並重畫面板）
     return { ok: true };
+  }
+
+  // 買耗材：確認視窗的標題是「名稱 ×1」（耗材卡片），或按鈕文字（重型機器人面板的「買 1 個並換上（價格）」）
+  function confirmPartPurchase(g, buy) {
+    const name = (partsOf(g.CFG)[buy.part] || {}).name || '';
+    const label = String(buy.label || '').trim().replace(/\s+/g, ' ').slice(0, 40);
+    return confirmPurchase(g, { titles: [name + ' ×1', label], price: buy.price, floor: CONFIG.minCoinsAfterBuyParts });
+  }
+
+  // ───────────────────────── 寵物飼料（貓、狗）─────────────────────────
+  //
+  // 貓、狗沒有「點牠餵食」這回事：時間到了（狗每 6 小時、貓每 8 小時，貪吃的貓 6 小時，幼犬幼貓加倍快），
+  // 遊戲自己從倉庫扣 1 份狗飼料／貓飼料；倉庫沒有就餓著（幼犬幼貓不長大、成犬成貓不工作）。
+  // 狗飼料、貓飼料只能在倉庫的「飼料商店」分頁買，所以要自動「餵」就是保持庫存：庫存不夠（或有寵物餓著）時，
+  // 開倉庫 → 飼料商店 → 買 10 份（遊戲會先跳「確定要買嗎？」，核對標題、價格、金幣才按「確定購買」）→ 關掉。
+  // 遊戲下一步就會自己把飼料餵給餓著的寵物。
+  const PET_FOOD = [
+    ['dog', 'dog_food'],
+    ['cat', 'cat_food'],
+  ];
+
+  // 哪些飼料要補貨：{ kind, item, name, pets, hungry, stock, target, lots, price（一次買 10 份的價格）}
+  function petFoodJobs(g) {
+    const { S, CFG } = g;
+    const pets = Array.isArray(S.pets) ? S.pets : [];
+    const shop = CFG.feedShop || {};
+    const out = [];
+    for (const [kind, item] of PET_FOOD) {
+      if (!(shop[item] > 0)) continue;
+      const mine = pets.filter((P) => P && P.kind === kind);
+      if (!mine.length) continue;
+      const hungry = mine.filter((P) => P.hungry).length;
+      const stock = (S.inv && S.inv[item]) || 0;
+      const low = mine.length * CONFIG.petFoodLowPerPet;
+      if (stock >= low && !(hungry > 0 && stock === 0)) continue;
+      const target = mine.length * CONFIG.petFoodTargetPerPet;
+      const lots = Math.min(5, Math.max(1, Math.ceil((target - stock) / 10)));
+      out.push({ kind, item, name: (CFG.items[item] || {}).name || item, pets: mine.length, hungry, stock, target, lots, price: shop[item] * 10 });
+    }
+    return out;
+  }
+
+  // 開倉庫 → 飼料商店 → 買 10 份（可能多次）→ 關掉。無論如何結束，只要是我們開的視窗就一定關掉。
+  async function petFoodFlow(g, jobs) {
+    const { S } = g;
+    let opened = false;
+    let clicked = false;
+    let why = '';
+    let bought = 0;
+    try {
+      const btn = $('storageBtn');
+      if (!btn) {
+        why = '找不到倉庫按鈕';
+        return;
+      }
+      btn.click();
+      if (!(await waitFor(() => isModalOpen() && modalTitle() === '倉庫', 1500))) {
+        why = '開不起倉庫視窗';
+        return;
+      }
+      opened = true;
+      const tab = document.querySelector('#modalTabs button[data-k="shop"]');
+      if (!tab) {
+        why = '找不到倉庫的「飼料商店」分頁';
+        return;
+      }
+      if (!tab.classList.contains('on')) tab.click();
+      outer: for (const j of jobs) {
+        for (let lot = 0; lot < j.lots; lot++) {
+          if ((S.inv[j.item] || 0) >= j.target) break;
+          const info = storageInfo(g);
+          if (info.free !== null && info.free < 10) {
+            why = '倉庫只剩 ' + info.free + ' 格空位，買不下 10 份' + j.name;
+            break outer;
+          }
+          if (S.player.coins < j.price + CONFIG.minCoinsAfterBuyPetFood) {
+            why = '缺' + j.name + '（庫存 ' + (S.inv[j.item] || 0) + '），金幣要 ' + (j.price + CONFIG.minCoinsAfterBuyPetFood) + ' 以上才買';
+            continue outer;
+          }
+          const b = await waitFor(() => document.querySelector('#modalBody button[data-buy="' + j.item + '"][data-q="10"]'), 1500);
+          if (!b) {
+            why = '飼料商店找不到「買 10 個」按鈕：' + j.name;
+            continue outer;
+          }
+          clicked = true;
+          b.click();
+          const r = await confirmPurchase(g, { titles: [j.name + ' ×10'], price: j.price, floor: CONFIG.minCoinsAfterBuyPetFood });
+          if (!r.ok) {
+            why = r.why;
+            break outer;
+          }
+          bought += 1;
+          await sleep(250); // 買完遊戲會重畫商店頁，下一輪重新找按鈕
+        }
+      }
+    } finally {
+      if (clicked && document.getElementById('ask47')) {
+        const no = document.querySelector('#ask47 #ask47c');
+        if (no) no.click();
+      }
+      const close = $('modalClose');
+      if (opened && isModalOpen() && close) {
+        close.click();
+        await sleep(150);
+      }
+      if (bought > 0) {
+        stats.petFood += bought;
+        lastActionAt = Date.now();
+        log('買了 ' + bought + ' 份（每份 10 個）寵物飼料');
+      }
+      const left = petFoodJobs(g);
+      if (!left.length) {
+        petFoodBlockedUntil = 0;
+        petFoodHint = '';
+      } else if (bought > 0) {
+        // 這次有買成，只是還沒補夠（一次最多買 5 次、或中途被擋）：不用等，下個週期接著補；沒進展才會暫停
+        petFoodBlockedUntil = 0;
+        petFoodHint = why;
+      } else {
+        petFoodBlockedUntil = Date.now() + CONFIG.petFoodRetryMs;
+        petFoodHint = why || '寵物飼料還沒補成';
+      }
+    }
   }
 
   // 找出下一個要處理的充電樁種類（略過暫停重試中的）；順便整理要寫在標籤上的原因
@@ -1203,6 +1338,7 @@
     }
     if (islandHint && !dry) hints.push(islandHint); // 有多座島：說明現在在哪座、是全島輪流還是只做這座
     if (partsHint) hints.push('機器人耗材：' + partsHint);
+    if (petFoodHint && !dry) hints.push('寵物飼料：' + petFoodHint);
 
     // 一次只用一種工具：抓蟲要「照顧」工具、播種／收成／魚池要「播種」工具、撿東西要「收成」工具、澆水要「澆水」工具。
     // 目前的工具還有事做就繼續用，做完才換，避免每個週期都來回切換；
@@ -1712,6 +1848,19 @@
       partsHint = '';
     }
 
+    // 寵物（貓、狗）的飼料庫存不夠、或有寵物餓著：到倉庫的飼料商店買（會花金幣，有開關與金幣底線）
+    if (CONFIG.autoBuyPetFood) {
+      const petJobs = petFoodJobs(g);
+      if (!petJobs.length) petFoodHint = '';
+      else if (Date.now() >= petFoodBlockedUntil) {
+        setStatus('補寵物飼料中…');
+        await petFoodFlow(g, petJobs);
+        return;
+      }
+    } else {
+      petFoodHint = '';
+    }
+
     const r = doFields(g, g.S.cur) || { work: false };
     if (multi && islandAfter(g, r, plans)) return;
   }
@@ -1746,6 +1895,8 @@
       partsWhy.clear();
       partsHint = '';
       islandSave = null; // 下個週期重新整理島嶼狀態：開始時看的那座就是家島
+      petFoodBlockedUntil = 0;
+      petFoodHint = '';
       status = '啟動中';
       timer = setInterval(onTick, CONFIG.tickMs);
     } else {
@@ -1874,7 +2025,7 @@
         '果樹 ' + stats.fruit + '｜魚池 ' + stats.fish + '｜機器 ' + stats.machine + '｜雜物 ' + stats.clean +
           '｜餵食 ' + stats.feed
       );
-      lines.push('蜂蜜 ' + stats.honey + '｜出貨 ' + stats.meat + '｜換耗材 ' + stats.parts);
+      lines.push('蜂蜜 ' + stats.honey + '｜出貨 ' + stats.meat + '｜換耗材 ' + stats.parts + '｜寵物飼料 ' + stats.petFood);
       if (islandLine) lines.push(islandLine);
       // 上一次真的做成事的時間：數字不動、又一直很久以前，就是停住了，看下一行的原因
       lines.push(lastActionAt ? '上次動作：' + fmtSec((Date.now() - lastActionAt) / 1000) + '前' : '開啟後還沒做成任何事');
@@ -1931,6 +2082,19 @@
       o.hasWork = islandPlan(g, mi).work;
       return o;
     });
+  }
+
+  // 診斷用：貓、狗各幾隻、餓著幾隻、倉庫裡有幾份飼料
+  function petsInfo(g) {
+    const pets = Array.isArray(g.S.pets) ? g.S.pets : [];
+    const o = { total: pets.length, hungry: 0, dogs: 0, cats: 0, dogFood: (g.S.inv && g.S.inv.dog_food) || 0, catFood: (g.S.inv && g.S.inv.cat_food) || 0 };
+    for (const P of pets) {
+      if (!P) continue;
+      if (P.kind === 'dog') o.dogs += 1;
+      else if (P.kind === 'cat') o.cats += 1;
+      if (P.hungry) o.hungry += 1;
+    }
+    return o;
   }
 
   // 診斷用：幾台機器人在等耗材（依耗材分）、倉庫裡對應的備品數
@@ -2044,6 +2208,7 @@
       islands: islandsInfo(g), // 每座島的概況與「現在有沒有事做」
       expandMode: isExpandMode(), // 遊戲的擴地模式開著時腳本會暫停
       robotParts: robotPartsInfo(g), // 等耗材的機器人台數（依耗材分）與倉庫備品
+      pets: petsInfo(g), // 貓狗隻數、餓著幾隻、飼料庫存
       inventoryByCategory: inv,
       tiles: count,
       ground,
@@ -2088,6 +2253,7 @@
         '\n雜草：地上 ' + G.ground.weed + '（草球 ' + G.ground.weedball + '）｜倉庫 ' + G.weedStock + ' 個｜空位 ' + G.storage.free + '（拔雜草要留 ' + CONFIG.weedKeepFree + '）' +
         '\n島 ' + G.maps.current + '/' + G.maps.total + (G.expandMode ? '｜擴地模式中（腳本暫停）' : '') +
         '｜等耗材的機器人 ' + G.robotParts.total + ' 台' +
+        '\n寵物：' + G.pets.dogs + ' 狗 ' + G.pets.cats + ' 貓｜餓著 ' + G.pets.hungry + '｜狗飼料 ' + G.pets.dogFood + '／貓飼料 ' + G.pets.catFood +
         (G.maps.total > 1
           ? '\n島嶼：' + (G.maps.mode === 'all' ? '全島輪流' : '只做這座') + '｜有事做：' +
             (G.islands.filter((i) => i.hasWork).map((i) => i.island).join('、') || '沒有')

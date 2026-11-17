@@ -23,6 +23,8 @@ module.exports = {
 
   // 腳本用的選擇器。prefix＝程式碼裡字面值的開頭（有用變數組字的只列到變數之前）
   selectors: [
+    { prefix: '#modalTabs button[data-k="shop"]', game: ['id="modalTabs"', "['shop','飼料商店']"] }, // 倉庫的「飼料商店」分頁（買狗飼料、貓飼料）
+    { prefix: '#modalBody button[data-buy="', game: ['data-buy="${id}" data-q="${q}"'] }, // 飼料商店的「買 10／50 個」
     { prefix: '#modalTabs button[data-k="produce"]', game: ['id="modalTabs"', 'data-k='] },
     { prefix: '#modalBody tr[data-bs259] input.cb259', game: ['id="modalBody"', 'data-bs259', 'cb259'] },
     { prefix: '#modalBody tr[data-bs259]', game: ['data-bs259'] },
@@ -76,6 +78,18 @@ module.exports = {
         "function animalAwayFrom(k){ const ag = RT.agents && RT.agents[`${S.cur}:${k}`];",
         "const mi = S.cur, reg = regionsFor(mi), dt = Math.min(.1, RT.frameDt || .016);",
         'const bonus = bonusMap(mi), cover = S.snow.cover, G = M.glass || {};',
+      ],
+    },
+    {
+      name: '貓、狗（寵物）自己從倉庫扣狗飼料／貓飼料，沒有就餓著（沒有「點牠餵食」）；飼料只能在倉庫的飼料商店買，買 10／50 個先跳確認視窗，標題是「名稱 ×數量」',
+      game: [
+        "function petEat(P){ const item = P.kind === 'dog' ? 'dog_food' : 'cat_food';",
+        'if (invTake(item, 1)) return true;',
+        "P.hungry = true;",
+        "const petList = () => (S.pets = S.pets || []);",
+        "if (d.buy && CFG.feedShop && CFG.feedShop[d.buy]){ const q = +d.q || 1;",
+        "return { cat: 'shop', title: `${itemName(d.buy)} ×${q}`,",
+        '狗飼料、貓飼料只能在這裡買',
       ],
     },
     { name: '動物走離家時點牠的家無效，要有 lastAnimalTap 記號', game: ['function animalAwayFrom', 'lastAnimalTap', 'lastAnimalTapAt'] },

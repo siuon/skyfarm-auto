@@ -175,14 +175,14 @@ test('擴地模式中、有視窗開著時不切島（腳本整個暫停）', as
 
 // ───── 模式、略過、換存檔 ─────
 
-test('Alt+Shift+M：全島輪流 ⇄ 只做這座；切到只做這座就不再切島', async () => {
+test('Alt+Shift+F：全島輪流 ⇄ 只做這座；切到只做這座就不再切島', async () => {
   const ctx = boot({ tiles: { '0,0': growing() }, maps: [{ tiles: { '1,0': weed() } }] }, { enable: true });
-  ctx.env.key('KeyM');
+  ctx.env.key('KeyF');
   assert.equal(ctx.t.CONFIG.islandMode, 'current');
   assert.match(ctx.t.note, /島嶼模式：只做畫面上這座/);
   await run(ctx, 8);
   assert.deepEqual(ctx.world.switches, []);
-  ctx.env.key('KeyM');
+  ctx.env.key('KeyF');
   assert.equal(ctx.t.CONFIG.islandMode, 'all');
   assert.match(ctx.t.note, /島嶼模式：全島輪流/);
   await run(ctx, 8);
@@ -315,7 +315,7 @@ test('預設值釘住（使用者 2026-11-16 決定：全島輪流、做完回�
   const { t } = boot({}, { enable: false });
   const C = t.CONFIG;
   assert.equal(C.islandMode, 'all');
-  assert.deepEqual({ ...C.islandKey }, { code: 'KeyM', alt: true, shift: true, ctrl: false });
+  assert.deepEqual({ ...C.islandKey }, { code: 'KeyF', alt: true, shift: true, ctrl: false });
   assert.equal(C.returnHome, true);
   assert.equal(C.maxStayMs, 60000);
   assert.equal(C.stuckMs, 15000);
