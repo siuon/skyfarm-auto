@@ -419,7 +419,7 @@ test('視窗內容一律用 textContent 寫入：說明文字裡的角括號不�
 
 // ───── 診斷、標籤 ─────
 
-test('診斷：只列出「改過的參數名」，不輸出值；沒改過就是空的', () => {
+test('診斷：customSettings 只列出「改過的參數名」（不含值）；沒改過就是空的', () => {
   const { ctx } = withStorage({ [KEY]: JSON.stringify({ autoSell: false, minCoinsAfterPlant: 77 }) });
   const g = ctx.t.describeGame();
   assert.deepEqual([...g.customSettings].sort(), ['autoSell', 'minCoinsAfterPlant']);
@@ -430,4 +430,65 @@ test('診斷：只列出「改過的參數名」，不輸出值；沒改過就�
 test('完整標籤的快速鍵說明包含 C 設定', () => {
   const ctx = farm({});
   assert.match(ctx.t.badge.textContent, /D 診斷／F 島嶼／C 設定/);
+});
+
+// ───── 顧問審查提出的缺口：恢復預設的路徑 ─────
+
+test('↺ 恢復預設也不能造出矛盾：補貨目標 20、低水位 15 時，把目標恢復成預設 10 會被擋下並顯示原因', () => {
+  const { ctx, storage } = withStorage({});
+  openPanel(ctx);
+  assert.equal(ctx.t.applySetting('petFoodTargetPerPet', 20).ok, true);
+  assert.equal(ctx.t.applySetting('petFoodLowPerPet', 15).ok, true);
+  row(ctx, 'petFoodTargetPerPet').reset.click();
+  assert.equal(ctx.t.CONFIG.petFoodTargetPerPet, 20, '沒有恢復成會矛盾的值');
+  assert.match(row(ctx, 'petFoodTargetPerPet').msg.textContent, /不能小於低水位（15）/);
+  assert.deepEqual(stored(storage), { petFoodTargetPerPet: 20, petFoodLowPerPet: 15 });
+  row(ctx, 'petFoodLowPerPet').reset.click(); // 先把低水位恢復，目標就能恢復了
+  assert.equal(ctx.t.CONFIG.petFoodLowPerPet, 4);
+  row(ctx, 'petFoodTargetPerPet').reset.click();
+  assert.equal(ctx.t.CONFIG.petFoodTargetPerPet, 10);
+  assert.equal(row(ctx, 'petFoodTargetPerPet').msg.textContent, '');
+  assert.equal(ctx.t.resetSetting('waterBelow').ok, true);
+  ctx.t.applySetting('waterBelow', 1);
+  ctx.t.applySetting('waterUpTo', 3);
+  ctx.t.applySetting('waterBelow', 3);
+  assert.equal(ctx.t.resetSetting('waterUpTo').ok, true, 'waterUpTo 恢復成 null（澆到滿）不會矛盾');
+  assert.equal(ctx.t.resetSetting('waterBelow').ok, true);
+});
+
+test('「全部恢復預設」：執行中的計時器照新的（預設）間隔重排', () => {
+  const ctx = boot({}, { timer: true });
+  ctx.t.applySetting('tickMs', 1500);
+  const t1 = ctx.t.timer;
+  const pending = ctx.clock.pending;
+  ctx.t.resetAllSettings();
+  assert.equal(ctx.t.CONFIG.tickMs, 400);
+  assert.notEqual(ctx.t.timer, t1, '計時器重排了');
+  assert.equal(ctx.clock.pending, pending, '沒有多出計時器');
+});
+
+test('「全部恢復預設」連 Alt+Shift+F 暫時切換的島嶼模式也回預設，視窗裡的選單跟著回去', () => {
+  const { ctx } = withStorage({});
+  openPanel(ctx);
+  ctx.env.key('KeyF');
+  assert.equal(ctx.t.CONFIG.islandMode, 'current');
+  assert.equal(row(ctx, 'islandMode').input.value, 'current');
+  ctx.t.resetAllSettings();
+  assert.equal(ctx.t.CONFIG.islandMode, 'all');
+  assert.equal(row(ctx, 'islandMode').input.value, 'all');
+});
+
+test('數字欄位：滑鼠滾輪一動就讓欄位失去焦點（不然滾輪會改數字，而改了就立刻套用並存檔）', () => {
+  const { ctx, storage } = withStorage({});
+  openPanel(ctx);
+  const inp = row(ctx, 'tickMs').input;
+  inp.focus();
+  inp.dispatch('wheel');
+  assert.equal(inp.blurs, 1);
+  assert.equal(storage.m.has(KEY), false, '什麼都沒存');
+  for (const key of ['minCoinsAfterBuyParts', 'maxStayMs']) {
+    const i2 = row(ctx, key).input;
+    i2.dispatch('wheel');
+    assert.equal(i2.blurs, 1, key);
+  }
 });

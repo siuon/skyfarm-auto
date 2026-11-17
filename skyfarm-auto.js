@@ -2684,6 +2684,9 @@
 
   function resetSetting(key) {
     if (!defOf.has(key)) return { ok: false, why: '沒有這個參數' };
+    // 恢復預設也不能造出「補貨目標 < 低水位」這種矛盾（要先把另一個也調好，或用「全部恢復預設」）
+    const why = crossCheck(key, DEFAULTS[key]);
+    if (why) return { ok: false, why };
     CONFIG[key] = cloneVal(DEFAULTS[key]);
     delete overrides[key];
     const saved = writeStored();
@@ -2692,11 +2695,12 @@
   }
 
   function resetAllSettings() {
-    for (const key of Object.keys(overrides)) CONFIG[key] = cloneVal(DEFAULTS[key]);
+    // 不只改過的：連 Alt+Shift+F 暫時切換的島嶼模式也一起回預設
+    for (const def of SETTING_DEFS) CONFIG[def.key] = cloneVal(DEFAULTS[def.key]);
     for (const key of Object.keys(overrides)) delete overrides[key];
     const saved = writeStored();
-    syncSettingsPanel();
-    renderBadge(false);
+    onSettingApplied('tickMs'); // 週期間隔回預設：執行中的計時器要重排
+    onSettingApplied('islandMode');
     return { ok: true, saved };
   }
 
@@ -2942,6 +2946,10 @@
         if (txt === '') commit(def.type === 'numOrNull' ? null : NaN);
         else commit(Number(txt));
       });
+      // 滑鼠移到數字欄位上、用滾輪捲動清單時，瀏覽器會在欄位有焦點時改數字；這裡的改動會立刻套用並存檔，所以滾輪一動就讓欄位失去焦點
+      inp.addEventListener('wheel', () => {
+        if (typeof inp.blur === 'function') inp.blur();
+      });
       entry.input = inp;
       top.appendChild(inp);
       if (def.unit) {
@@ -2962,8 +2970,8 @@
     reset.title = '恢復預設（' + fmtSetting(def, DEFAULTS[def.key]) + '）';
     styleBtn(reset, false);
     reset.addEventListener('click', () => {
-      resetSetting(def.key);
-      msg.textContent = '';
+      const r = resetSetting(def.key);
+      msg.textContent = r.ok ? '' : r.why;
     });
     top.appendChild(reset);
     entry.reset = reset;

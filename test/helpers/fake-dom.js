@@ -89,6 +89,10 @@ class FakeEl {
   focus() {
     this.focused = true;
   }
+  blur() {
+    this.focused = false;
+    this.blurs = (this.blurs || 0) + 1;
+  }
   select() {}
   getBoundingClientRect() {
     return { x: 1, y: 2, width: this.clientWidth, height: this.clientHeight };
