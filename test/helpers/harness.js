@@ -19,14 +19,17 @@ const SCRIPT_PATH = path.join(__dirname, '..', '..', 'skyfarm-auto.js');
 const FUNCS = [
   'game', 'storageInfo', 'isModalOpen', 'modalTitle', 'isRipe', 'hostOf', 'treeReady', 'poolState', 'machineState',
   'isAdultAnimal', 'animalHungry', 'animalFeedNeed', 'targetStock', 'fmtSec', 'isSellTarget', 'isSellWeed', 'unlockLevel', 'islandsInfo', 'islandPlan', 'toggleIslandMode',
+  'coerceSetting', 'crossCheck', 'loadSettings', 'applySetting', 'resetSetting', 'resetAllSettings', 'fmtSetting',
+  'openSettingsPanel', 'closeSettingsPanel', 'toggleSettingsPanel', 'syncSettingsPanel',
   'resolveCrop', 'waitFor', 'sellFlow', 'ensureToolIs', 'prepareTool', 'prepareCareTool', 'animalAway',
   'markAnimalTap', 'settlePopup', 'doFields', 'tick', 'onTick', 'setEnabled', 'setStatus', 'setNote',
   'renderBadge', 'hotkeyLine', 'describeGame', 'runProbe', 'openCropPanel', 'closePanel', 'requestToggle',
   'stripUrl', 'keyLabel', 'matchKey',
 ];
-const CONSTS = ['CONFIG', 'VERSION', 'NAME', 'BADGE_ID', 'PANEL_ID', 'cooldown', 'wetting', 'islandState'];
+const CONSTS = ['CONFIG', 'VERSION', 'NAME', 'BADGE_ID', 'PANEL_ID', 'cooldown', 'wetting', 'islandState',
+  'SCHEMA', 'SETTING_DEFS', 'DEFAULTS', 'overrides', 'SETTINGS_KEY', 'SETTINGS_PANEL_ID', 'HOTKEY_NAMES', 'settingsRows'];
 const STATE = [
-  ['enabled', false], ['status', false], ['note', false], ['stats', false], ['badge', false], ['collapsed', true], ['panel', false],
+  ['enabled', false], ['status', false], ['note', false], ['stats', false], ['badge', false], ['collapsed', true], ['panel', false], ['settingsPanel', false],
   ['homeIsland', false], ['expectedCur', false], ['holdUntil', true], ['islandHint', false], ['islandLine', false],
   ['targetCrop', true], ['needSell', true], ['sellBlockedUntil', true], ['lastActionAt', true], ['timer', false],
 ];
@@ -90,6 +93,10 @@ function load(o = {}) {
       (listeners[type] = listeners[type] || []).push({ fn, capture });
     },
   });
+  if (o.storage) sandbox.localStorage = o.storage; // 假的 localStorage（makeStorage）
+  if (o.storageBlocked) {
+    Object.defineProperty(sandbox, 'localStorage', { get() { throw new Error('SecurityError'); }, configurable: true }); // 私密視窗／封鎖儲存空間時，連讀取屬性都會丟錯
+  }
   sandbox.window = sandbox;
   sandbox.top = sandbox;
   vm.createContext(sandbox);
@@ -125,4 +132,29 @@ function load(o = {}) {
   return env;
 }
 
-module.exports = { load, readSource, withShim, shimCode, SCRIPT_PATH, FUNCS, CONSTS };
+// 假的 localStorage：記錄每一次呼叫（log），可以設定讀取或寫入時丟錯
+function makeStorage(initial = {}, opts = {}) {
+  const m = new Map(Object.entries(initial));
+  const log = [];
+  return {
+    m,
+    log,
+    getItem(k) {
+      log.push(['get', k]);
+      if (opts.throwOnGet) throw new Error('denied');
+      return m.has(k) ? m.get(k) : null;
+    },
+    setItem(k, v) {
+      log.push(['set', k, String(v)]);
+      if (opts.throwOnSet) throw new Error('quota');
+      m.set(k, String(v));
+    },
+    removeItem(k) {
+      log.push(['remove', k]);
+      if (opts.throwOnSet) throw new Error('denied');
+      m.delete(k);
+    },
+  };
+}
+
+module.exports = { load, readSource, withShim, shimCode, SCRIPT_PATH, FUNCS, CONSTS, makeStorage };

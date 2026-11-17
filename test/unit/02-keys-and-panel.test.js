@@ -245,9 +245,14 @@ test('小方格：要讓玩家看到的訊息（診斷結果、錯誤…）一�
 });
 
 test('小方格狀態只存在記憶體：不寫入任何儲存空間，也不留在 window 上', () => {
-  const e = boot({}, { enable: false });
+  const { makeStorage } = require('../helpers/harness');
+  const storage = makeStorage();
+  const e = boot({}, { enable: false, loadOpts: { storage } });
+  const before = storage.log.length; // 載入時讀過設定
   e.t.badge.click();
-  assert.equal(e.env.win.localStorage, undefined);
+  e.t.badge.click();
+  assert.equal(storage.log.length, before, '點標籤、縮放不讀也不寫儲存空間');
+  assert.deepEqual(storage.log.filter((x) => x[0] !== 'get'), []);
   assert.ok(!Object.getOwnPropertyNames(e.env.win).some((k) => /collapsed/i.test(k)));
 });
 

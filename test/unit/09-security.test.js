@@ -39,11 +39,31 @@ test('靜態檢查：程式碼裡沒有危險的 API（不改 HTML、不執行�
   const banned = [
     'innerHTML', 'outerHTML', 'insertAdjacentHTML', 'document.write', 'eval(', 'new Function', 'Function(',
     'setTimeout("', "setTimeout('", 'GM_', 'GM.', 'unsafeWindow', 'fetch(', 'XMLHttpRequest', 'WebSocket', 'EventSource',
-    'sendBeacon', 'navigator.sendBeacon', 'localStorage', 'sessionStorage', 'indexedDB', 'document.cookie', 'caches.',
+    'sendBeacon', 'navigator.sendBeacon', 'sessionStorage', 'indexedDB', 'document.cookie', 'caches.',
     'importScripts', 'window.open', 'postMessage', 'location.href =', 'location.assign', 'location.replace', 'import(',
     'Worker(', 'ServiceWorker', 'serviceWorker', 'atob(', 'btoa(',
   ];
   for (const b of banned) assert.ok(!code.includes(b), '程式碼裡不該出現：' + b);
+});
+
+test('靜態檢查：唯一碰儲存空間的地方是設定視窗存取「自己的一個鍵」——不讀、不寫遊戲自己的存檔', () => {
+  // 2026-11-17 使用者決定：設定視窗改過的值存在瀏覽器（localStorage），這是腳本唯一碰儲存空間的地方
+  const uses = code.match(/localStorage/g) || [];
+  const calls = code.match(/window\.localStorage\.(getItem|setItem|removeItem)\(/g) || [];
+  assert.equal(uses.length, 3, 'localStorage 只出現在讀、寫、清除那三個呼叫');
+  assert.equal(calls.length, 3);
+  assert.deepEqual(calls.map((c) => c.split('.')[2].replace('(', '')).sort(), ['getItem', 'removeItem', 'setItem']);
+  assert.match(code, /window\.localStorage\.getItem\(SETTINGS_KEY\)/);
+  assert.match(code, /window\.localStorage\.setItem\(SETTINGS_KEY,/);
+  assert.match(code, /window\.localStorage\.removeItem\(SETTINGS_KEY\)/);
+  assert.match(code, /const SETTINGS_KEY = 'skyfarm-auto-settings';/);
+  assert.ok(!/localStorage\[|localStorage\.key|localStorage\.clear|localStorage\.length/.test(code), '不枚舉、不清空整個儲存空間');
+  assert.ok(!/Object\.keys\(window\.localStorage|for \(.* in window\.localStorage/.test(code));
+  // 這三個呼叫都在 try 裡面（儲存空間被封鎖時連讀取屬性都會丟錯）
+  for (const fn of ['readStored', 'writeStored']) {
+    const m = new RegExp('function ' + fn + '\\(\\) \\{\\s*try \\{').exec(code);
+    assert.ok(m, fn + ' 一定要 try 起來');
+  }
 });
 
 test('靜態檢查：只能對遊戲網站執行（@match 在載入器；腳本本身不含網址比對以外的外連）', () => {

@@ -3,11 +3,14 @@
  *
  * 由 Tampermonkey 透過 @require 載入（設定見 skyfarm-auto.loader.user.js）。
  *
- * 功能（0.15.0）：
+ * 功能（0.16.0）：
  *   - Alt+Shift+S：跳出輸入框，輸入「這次要自動種植的作物」（中文名稱或代號皆可）
  *   - Alt+Shift+A：開啟／關閉自動功能（每次載入頁面一律預設 OFF，不會記住 ON）；
  *                  還沒設定作物就按開啟時，會先跳出輸入框，確認後才開始
  *   - Alt+Shift+D：唯讀診斷，輸出頁面與遊戲狀態摘要並複製到剪貼簿
+ *   - Alt+Shift+C：開關「設定視窗」——CONFIG 裡可以調的參數都在裡面，有說明與預設值，改了立刻生效；
+ *                  改過的值存在這個網站的 localStorage 的一個鍵（skyfarm-auto-settings），下次載入自動套用
+ *                  （開關、作物、Alt+Shift+F 的暫時切換不存；快速鍵不能在視窗裡改）。新增 CONFIG 參數要同時加進 SCHEMA。
  *   - 設定的作物不會被記住（重新整理頁面就要重設），目前作物顯示在右下角標籤
  *   - 自動功能開啟後，只處理「設定的作物」，每個週期依序處理：
  *       1. 遊戲跳出「農產倉庫滿了」視窗 → 按「先不收成」，並標記要賣出
@@ -69,6 +72,8 @@
  *   - 不使用 GM_* 權限（@grant none），不對外發送任何網路請求。
  *   - 只用 textContent 寫入畫面，不使用 innerHTML / eval / new Function。
  *   - 不在 window 上暴露任何物件；只接受使用者真實按鍵（isTrusted）。
+ *   - 儲存空間：唯一會碰的是設定視窗存取「自己的一個鍵」skyfarm-auto-settings（2026-11-17 使用者決定存在瀏覽器）；
+ *     不讀、不寫遊戲自己的存檔，不枚舉、不清空；讀回來只認設定表（SCHEMA）列出的參數，逐項驗型別與範圍，壞掉就用預設。
  *   - 不直接改寫遊戲資料（不改金幣、倉庫、作物），只做玩家本來就能做的操作。
  *     只有兩處碰到遊戲的「介面暫存狀態」（不是存檔資料）：
  *       a. 動物走離家時，點牠前補上遊戲自己的「剛點了這隻動物」記號（RT.lastAnimalTap），
@@ -81,9 +86,10 @@
   'use strict';
 
   const NAME = 'SkyFarmAuto';
-  const VERSION = '0.15.0';
+  const VERSION = '0.16.0';
   const BADGE_ID = 'skyfarm-auto-badge';
   const PANEL_ID = 'skyfarm-auto-panel';
+  const SETTINGS_PANEL_ID = 'skyfarm-auto-settings-panel';
 
   // ───────────────────────── 設定（想改行為只需要改這裡）─────────────────────────
   const CONFIG = {
@@ -92,6 +98,7 @@
     cropKey: { code: 'KeyS', alt: true, shift: true, ctrl: false },
     probeKey: { code: 'KeyD', alt: true, shift: true, ctrl: false },
     islandKey: { code: 'KeyF', alt: true, shift: true, ctrl: false }, // 切換「全島輪流／只做畫面上這座」
+    configKey: { code: 'KeyC', alt: true, shift: true, ctrl: false }, // 開關「設定視窗」
 
     tickMs: 400, // 每個週期的間隔（毫秒）
     maxActionsPerTick: 3, // 每個週期最多收成／播種幾格（遊戲每次操作都會存檔，不宜一次太多）
@@ -155,6 +162,9 @@
     userSwitchHoldMs: 30000, // 你手動切島後，這段時間內腳本不自己切走
     skipIslands: [], // 不自動切過去的島（編號從 1 起算）；你自己看著那座時照常處理
   };
+
+  // 預設值快照（設定視窗的「預設」「恢復預設」用；一定要在任何人改 CONFIG 之前拍）
+  const DEFAULTS = JSON.parse(JSON.stringify(CONFIG));
 
   // 避免被重複注入
   if (window['__' + NAME + '_loaded__']) return;
@@ -1964,6 +1974,7 @@
       [CONFIG.cropKey, '作物'],
       [CONFIG.probeKey, '診斷'],
       [CONFIG.islandKey, '島嶼'],
+      [CONFIG.configKey, '設定'],
     ];
     const mod = (k) => [k.ctrl && 'Ctrl', k.alt && 'Alt', k.shift && 'Shift'].filter(Boolean).join('+');
     const letter = (k) => k.code.replace(/^Key/, '');
@@ -2214,6 +2225,7 @@
       maps: { total: S.maps.length, current: S.cur + 1, mode: CONFIG.islandMode, home: homeIsland === null ? null : homeIsland + 1 },
       islands: islandsInfo(g), // 每座島的概況與「現在有沒有事做」
       expandMode: isExpandMode(), // 遊戲的擴地模式開著時腳本會暫停
+      customSettings: Object.keys(overrides), // 在設定視窗改過的參數名（值不輸出）
       robotParts: robotPartsInfo(g), // 等耗材的機器人台數（依耗材分）與倉庫備品
       pets: petsInfo(g), // 貓狗隻數、餓著幾隻、飼料庫存
       inventoryByCategory: inv,
@@ -2436,8 +2448,9 @@
 
   // 全島輪流 ⇄ 只做畫面上這座（只存在記憶體，重新整理頁面就恢復預設）
   function toggleIslandMode() {
-    CONFIG.islandMode = CONFIG.islandMode === 'all' ? 'current' : 'all';
+    CONFIG.islandMode = CONFIG.islandMode === 'all' ? 'current' : 'all'; // 暫時的：不存進 overrides
     holdUntil = 0;
+    syncSettingsPanel();
     setNote(
       CONFIG.islandMode === 'all' ? '島嶼模式：全島輪流（腳本會自己切島）' : '島嶼模式：只做畫面上這座',
       4000
@@ -2451,6 +2464,518 @@
     else setEnabled(true);
   }
 
+  // ───────────────────────── 設定視窗與保存 ─────────────────────────
+  //
+  // Alt+Shift+C 開關「設定視窗」：列出 CONFIG 裡可以調的參數、每個的說明與預設值，改了立刻生效。
+  // 改過的值（只有「和預設不同」的）存在這個網站的 localStorage 的一個鍵（SETTINGS_KEY）裡，下次載入時讀回來；
+  // 「開關（ON／OFF）」「設定的作物」「Alt+Shift+F 的全島輪流⇄只做這座」不存。快速鍵本身不能在視窗裡改（改錯會把自己鎖在外面）。
+  // 資安：
+  //   - 讀回來時只看 SCHEMA 列出的參數（不是照存下來的 JSON 的鍵去套，所以 __proto__ 之類的鍵進不來），
+  //     每一項都驗型別與範圍，不合的整項忽略；JSON 壞掉、超過 4 KB、瀏覽器不讓用儲存空間，都不會丟錯。
+  //   - 只碰自己的這一個鍵，不讀、不寫遊戲自己的存檔；視窗內容只用 textContent 寫入。
+  const SETTINGS_KEY = 'skyfarm-auto-settings';
+  const SETTINGS_MAX_CHARS = 4096;
+  const SECS = '毫秒';
+
+  const bool = (key, label, desc) => ({ key, type: 'bool', label, desc });
+  const num = (key, label, desc, min, max, unit, type) => ({ key, type: type || 'int', label, desc, min, max, unit: unit || '' });
+
+  // 參數表：[群組名, [參數…]]。每個參數的 label 是畫面上的名稱，desc 是說明；min／max 是允許的範圍
+  const SCHEMA = [
+    ['節奏', [
+      num('tickMs', '週期間隔', '腳本每隔多久檢查並動作一次。越小反應越快，但遊戲每次操作都會存檔，太快會增加負擔。', 200, 5000, SECS),
+      num('maxActionsPerTick', '每週期最多動作格數', '一個週期最多收成、播種、澆水幾格。遊戲每次操作都會存檔，不宜一次太多。', 1, 10, '格'),
+    ]],
+    ['收成與播種（設定的作物）', [
+      bool('autoHarvest', '自動收成', '成熟的作物自動收成（倉庫放得下才收；放不下會先賣出騰空間）。'),
+      bool('autoPlant', '自動播種', '空的田自動種下你設定的作物（會花金幣買種子）。'),
+      num('minCoinsAfterPlant', '播種後至少保留金幣', '播種後金幣要還有這麼多才播，避免把錢花光。0＝不保留。', 0, 10000000, '金幣'),
+      bool('harvestOtherCrops', '也收其他作物', '田裡「不是設定作物」的作物，成熟了也收成（只收、不澆水、不賣）。空出來的田照常補種設定作物。'),
+      num('otherCropsKeepFree', '收其他作物要保留的倉庫空位', '其他作物不會自動賣，所以收完倉庫至少要還剩這麼多空位才收，免得擠掉設定作物的位置。', 0, 1000, '格'),
+      bool('handleOtherCrops', '其他作物也澆水', '關閉＝其他作物不澆水（成熟了仍會收）；開啟＝也替它們澆水，收成不受上一項限制（但仍不會賣）。'),
+    ]],
+    ['賣出', [
+      bool('autoSell', '自動賣出', '倉庫快滿時，開倉庫賣掉設定的作物（含有機版）。關閉＝完全不自動賣。'),
+      num('sellWhenFreeAtMost', '剩幾格空位就賣', '倉庫剩餘空位 ≤ 這個數就開始賣出（只賣設定的作物與它的有機版）。', 0, 1000, '格'),
+      bool('sellWhenCantPlant', '沒錢買種子時先賣', '有空田、但金幣不夠買種子時，直接賣掉倉庫裡設定的作物換錢，不等倉庫快滿。'),
+      num('sellRetryMs', '賣不出去的重試間隔', '賣不出東西（倉庫裡沒有設定的作物…）時，隔多久才再試一次。', 1000, 3600000, SECS),
+      bool('sellWeedsWithCrops', '賣作物時一併賣雜草', '賣出設定的作物時，倉庫裡的雜草（1 金幣一個）也一起賣掉。雜草在倉庫裡沒有數量上限。'),
+    ]],
+    ['澆水與抓蟲', [
+      bool('autoWater', '自動澆水', '還在長的作物（含枯萎的）自動澆水。只用雨水，雨水不夠就暫停，不會動用要花錢的自來水。'),
+      num('waterBelow', '濕度低於幾級開始澆', '濕度 0～4 級（每澆一下 +1 級）。低於這個值就開始澆。', 0, 4, '級', 'num'),
+      num('waterUpTo', '澆到幾級為止', '澆到這個濕度就停。留空＝澆到滿。不能小於「開始澆的濕度」。', 1, 4, '級', 'numOrNull'),
+      bool('autoWaterTrees', '果樹也澆水', '果樹也澆雨水（會和作物搶水，預設關閉）。'),
+      bool('autoCatchPests', '自動捉蟲', '作物、果樹長蟲時，用「照顧」工具的「捉蟲」（免費）點到抓光。絕不噴農藥、不施肥（那會花錢，還會讓有機作物變一般作物）。'),
+      bool('catchPestsOnOtherCrops', '其他作物與果樹長蟲也抓', '蟲會往旁邊擴散，所以其他種類的作物、果樹長蟲也一起抓（抓蟲免費，不影響收成與庫存）。'),
+    ]],
+    ['動物與寵物', [
+      bool('autoPickPoop', '撿糞便', '地上的動物糞便自動點掉，收進倉庫（倉庫沒空位就暫停）。'),
+      bool('autoCollectAnimalProducts', '收動物產物', '蛋、奶、羊毛…自動收（點動物，倉庫放得下才收；遊戲會順便餵食）。'),
+      bool('autoHarvestMeatAnimals', '肉用動物長大後出貨', '長大了的肉用動物自動出貨（點一下，肉進倉庫、動物就沒了）。遊戲規定長大後放 2 天牠會自己死掉；不會補買小動物。'),
+      bool('autoFeedAnimals', '餓了的動物自動餵', '點一下餵食（成長階段、產物型成年後都要餵）。先用倉庫現有的飼料，不夠就不餵。'),
+      bool('buyFeedWhenShort', '飼料不夠時補買', '倉庫飼料不夠時，在遊戲自己開著「飼料不夠時自動買」的前提下，用金幣照商店價補買。會花金幣。'),
+      num('minCoinsAfterBuyFeed', '補買飼料後至少保留金幣', '補買飼料後金幣要還有這麼多，才會補買。', 0, 10000000, '金幣'),
+      bool('autoBuyPetFood', '貓狗飼料自動補貨', '貓、狗自己從倉庫扣狗飼料／貓飼料，沒有就餓著。庫存不夠時到倉庫的「飼料商店」買 10 份。會花金幣；遊戲的確認視窗會核對後才按。'),
+      num('petFoodLowPerPet', '補貨低水位（每隻幾份）', '狗（貓）飼料庫存低於「隻數 × 這個數」，或有餓著的就補貨。不能大於補貨目標。', 1, 100, '份/隻'),
+      num('petFoodTargetPerPet', '補貨目標（每隻幾份）', '補貨補到每隻這麼多份（一次買 10 份、一次最多買 5 次）。不能小於低水位。', 1, 100, '份/隻'),
+      num('minCoinsAfterBuyPetFood', '買寵物飼料後至少保留金幣', '買完金幣要還有這麼多才買。', 0, 10000000, '金幣'),
+      num('petFoodRetryMs', '補貨失敗的重試間隔', '補貨沒成功（金幣不夠、倉庫沒空位…）時，隔多久才再試。', 1000, 3600000, SECS),
+    ]],
+    ['果樹、魚池、蜂箱、機器', [
+      bool('autoHarvestTrees', '採果樹', '果樹結果了自動採收（倉庫放得下才收）。'),
+      bool('autoHarvestFish', '收魚', '魚池裡長成的魚自動收成（倉庫放得下才收；不會補魚苗）。'),
+      bool('autoFeedFish', '餵魚', '魚餓了就餵，只用倉庫現有的飼料，不夠就不餵、不自動買（預設關閉）。'),
+      bool('autoCollectHoney', '收蜂蜜', '蜂箱裡存的蜂蜜自動收進倉庫（倉庫放得下才收；只點有蜂蜜的蜂箱）。'),
+      bool('autoCollectMachines', '收機器成品', '機器做好的成品自動收進倉庫（倉庫放得下才收）。'),
+      bool('autoLoadMachines', '機器自動投料', '機器空了自動投料，會消耗倉庫的材料（預設關閉）。只對下一項勾選的機器投。'),
+      { key: 'loadMachineIds', type: 'machines', label: '要自動投料的機器', desc: '只有勾選的機器才會被自動投料。玉米餅機會把很值錢的玉米變成便宜的飼料，所以預設沒勾。' },
+      num('machineMaxStock', '成品庫存上限', '投料前，這種成品在倉庫的庫存已經 ≥ 這個數就不再投，避免成品把倉庫塞滿。', 0, 10000, '個'),
+    ]],
+    ['地上雜物', [
+      bool('autoStraighten', '扶正歪掉的裝飾', '被風吹歪的裝飾、倒下的柵欄自動扶正（免費、不佔倉庫）。'),
+      bool('autoClearDebris', '撿碎石', '地上的碎石等垃圾自動撿掉（免費、不佔倉庫）。'),
+      bool('autoClearWeeds', '拔雜草', '地上的雜草、草球自動拔掉，會收進倉庫。'),
+      num('weedKeepFree', '拔雜草要保留的倉庫空位', '拔完倉庫至少要還剩這麼多空位才拔。雜草不值錢，不能擠掉作物、蛋、奶的位置。', 0, 1000, '格'),
+    ]],
+    ['機器人', [
+      bool('autoSwapParts', '機器人自動換耗材', '耗材磨完的機器人，到它的充電樁面板替它換上（伐木、採礦、整地機器人遊戲規定要手動換）。有備品就免費換。'),
+      bool('buyPartsWhenShort', '沒備品時自動買', '倉庫沒備品時，花金幣買 1 個再換上（照商店單價：鋸鏈 150、鑽頭 250、鏟刃 100、輪子 50…）。會花金幣。'),
+      num('minCoinsAfterBuyParts', '買耗材後至少保留金幣', '買完金幣要還有這麼多才買。', 0, 10000000, '金幣'),
+      num('partsRetryMs', '換耗材失敗的重試間隔', '沒換成（沒備品、金幣不夠、這座島沒有充電樁…）時，隔多久才再試。', 1000, 3600000, SECS),
+    ]],
+    ['多座島', [
+      { key: 'islandMode', type: 'enum', options: [['all', '全島輪流'], ['current', '只做畫面上這座']], label: '島嶼模式', desc: '全島輪流＝腳本自己切島，處理有事做的島；只做畫面上這座＝不切島。Alt+Shift+F 可以暫時切換（不會存）。' },
+      bool('returnHome', '做完回家島', '其他島做完後切回「家島」（按開始時看的那座，或你最後手動切到的那座）。'),
+      num('maxStayMs', '一座島最長占用時間', '一座島連續占用超過這麼久、而別座也有事做，就讓出去輪下一座。', 5000, 3600000, SECS),
+      num('stuckMs', '判定卡住的時間', '這座島有事做、卻這麼久都沒做成任何事，就先去別座。', 3000, 3600000, SECS),
+      num('islandRetryMs', '白跑的島暫停時間', '切過去卻沒做成事的島，隔多久才再考慮（連續失敗會加倍，最久 5 分鐘）。', 1000, 3600000, SECS),
+      num('islandHopMinMs', '兩次切島的最短間隔', '兩次切島之間至少隔多久，避免畫面來回跳。', 0, 600000, SECS),
+      num('userSwitchHoldMs', '你手動切島後的暫停時間', '你自己點「農場 N」切島後，這段時間內腳本不會自己切走。', 0, 3600000, SECS),
+      { key: 'skipIslands', type: 'islands', label: '不自動切過去的島', desc: '填島的編號（從 1 起算，用逗號隔開，例如 2, 3）。這些島不會被自動切過去；你自己看著那座時照常處理。' },
+    ]],
+  ];
+  const SETTING_DEFS = SCHEMA.flatMap(([group, items]) => items.map((d) => Object.assign({ group }, d)));
+  const defOf = new Map(SETTING_DEFS.map((d) => [d.key, d]));
+  const HOTKEY_NAMES = [
+    ['toggleKey', '開關'],
+    ['cropKey', '設定作物'],
+    ['probeKey', '診斷'],
+    ['islandKey', '全島輪流⇄只做這座'],
+    ['configKey', '設定視窗'],
+  ];
+
+  const overrides = {}; // 參數名 → 值：只放「和預設不同」的（也是存進 localStorage 的內容）
+  const cloneVal = (v) => JSON.parse(JSON.stringify(v));
+  const sameVal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+  // 驗證一個值：{ ok: true, value } 或 { ok: false, why }。不合就整項不收
+  function coerceSetting(def, v) {
+    const bad = (why) => ({ ok: false, why });
+    const good = (value) => ({ ok: true, value });
+    switch (def.type) {
+      case 'bool':
+        return typeof v === 'boolean' ? good(v) : bad('要是「開」或「關」');
+      case 'int':
+      case 'num':
+      case 'numOrNull': {
+        if (v === null && def.type === 'numOrNull') return good(null);
+        if (typeof v !== 'number' || !Number.isFinite(v)) return bad('要是' + (def.type === 'int' ? '整數' : '數字'));
+        if (def.type === 'int' && !Number.isInteger(v)) return bad('要是整數');
+        if (v < def.min || v > def.max) return bad('要在 ' + def.min + ' ～ ' + def.max + ' 之間');
+        return good(v);
+      }
+      case 'enum':
+        return def.options.some((o) => o[0] === v) ? good(v) : bad('不是可選的項目');
+      case 'islands': {
+        if (!Array.isArray(v) || v.length > 20) return bad('要是島的編號清單（最多 20 個）');
+        if (!v.every((n) => Number.isInteger(n) && n >= 1 && n <= 99)) return bad('島的編號要是 1 ～ 99 的整數');
+        return good(Array.from(new Set(v)).sort((a, b) => a - b));
+      }
+      case 'machines': {
+        if (!Array.isArray(v) || v.length > 40) return bad('要是機器代號的清單');
+        if (!v.every((id) => typeof id === 'string' && /^[a-z0-9_]{1,40}$/.test(id))) return bad('機器代號只能是小寫英文、數字、底線');
+        return good(Array.from(new Set(v)));
+      }
+      default:
+        return bad('未知的參數型別');
+    }
+  }
+
+  // 兩個參數之間的關係（單看一個值驗不出來的）。回傳不合的原因，合就回傳 ''
+  function crossCheck(key, value) {
+    if (key === 'petFoodTargetPerPet' && value < CONFIG.petFoodLowPerPet) return '補貨目標不能小於低水位（' + CONFIG.petFoodLowPerPet + '）';
+    if (key === 'petFoodLowPerPet' && value > CONFIG.petFoodTargetPerPet) return '低水位不能大於補貨目標（' + CONFIG.petFoodTargetPerPet + '）';
+    if (key === 'waterUpTo' && value !== null && value < CONFIG.waterBelow) return '不能小於「開始澆的濕度」（' + CONFIG.waterBelow + '）';
+    if (key === 'waterBelow' && CONFIG.waterUpTo !== null && value > CONFIG.waterUpTo) return '不能大於「澆到幾級」（' + CONFIG.waterUpTo + '）';
+    return '';
+  }
+
+  function readStored() {
+    try {
+      const raw = window.localStorage.getItem(SETTINGS_KEY);
+      if (typeof raw !== 'string' || !raw || raw.length > SETTINGS_MAX_CHARS) return null;
+      const obj = JSON.parse(raw);
+      return obj && typeof obj === 'object' && !Array.isArray(obj) ? obj : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // 回傳 true＝存成功；沒有任何要存的就把鍵清掉
+  function writeStored() {
+    try {
+      if (Object.keys(overrides).length === 0) window.localStorage.removeItem(SETTINGS_KEY);
+      else window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(overrides));
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  // 載入時把存下來的值套回 CONFIG；回傳套用了幾項
+  function loadSettings() {
+    const obj = readStored();
+    if (!obj) return 0;
+    let n = 0;
+    for (const def of SETTING_DEFS) {
+      if (!Object.prototype.hasOwnProperty.call(obj, def.key)) continue;
+      const r = coerceSetting(def, obj[def.key]);
+      if (!r.ok || sameVal(r.value, DEFAULTS[def.key])) continue;
+      CONFIG[def.key] = cloneVal(r.value);
+      overrides[def.key] = cloneVal(r.value);
+      n += 1;
+    }
+    // 兩個參數之間的關係不合（例如被手動改壞的）：那一組都回到預設
+    const resetKeys = (keys) => keys.forEach((k) => {
+      CONFIG[k] = cloneVal(DEFAULTS[k]);
+      delete overrides[k];
+    });
+    if (CONFIG.petFoodTargetPerPet < CONFIG.petFoodLowPerPet) resetKeys(['petFoodTargetPerPet', 'petFoodLowPerPet']);
+    if (CONFIG.waterUpTo !== null && CONFIG.waterUpTo < CONFIG.waterBelow) resetKeys(['waterUpTo', 'waterBelow']);
+    return n;
+  }
+
+  function onSettingApplied(key) {
+    if (key === 'tickMs' && enabled) {
+      clearInterval(timer);
+      timer = setInterval(onTick, CONFIG.tickMs); // 週期間隔改了：重新排計時器
+    }
+    if (key === 'islandMode') holdUntil = 0;
+    syncSettingsPanel();
+    renderBadge(false);
+  }
+
+  // 改一項設定：驗證 → 套用到 CONFIG（立刻生效）→ 存起來。回傳 { ok, why, saved }
+  function applySetting(key, raw) {
+    const def = defOf.get(key);
+    if (!def) return { ok: false, why: '沒有這個參數' };
+    const r = coerceSetting(def, raw);
+    if (!r.ok) return r;
+    const why = crossCheck(key, r.value);
+    if (why) return { ok: false, why };
+    CONFIG[key] = cloneVal(r.value);
+    if (sameVal(r.value, DEFAULTS[key])) delete overrides[key];
+    else overrides[key] = cloneVal(r.value);
+    const saved = writeStored();
+    onSettingApplied(key);
+    return { ok: true, value: r.value, saved };
+  }
+
+  function resetSetting(key) {
+    if (!defOf.has(key)) return { ok: false, why: '沒有這個參數' };
+    CONFIG[key] = cloneVal(DEFAULTS[key]);
+    delete overrides[key];
+    const saved = writeStored();
+    onSettingApplied(key);
+    return { ok: true, saved };
+  }
+
+  function resetAllSettings() {
+    for (const key of Object.keys(overrides)) CONFIG[key] = cloneVal(DEFAULTS[key]);
+    for (const key of Object.keys(overrides)) delete overrides[key];
+    const saved = writeStored();
+    syncSettingsPanel();
+    renderBadge(false);
+    return { ok: true, saved };
+  }
+
+  // 畫面上怎麼顯示一個值（預設值提示、清單用）
+  function fmtSetting(def, v) {
+    if (def.type === 'bool') return v ? '開' : '關';
+    if (def.type === 'enum') return (def.options.find((o) => o[0] === v) || [v, String(v)])[1];
+    if (def.type === 'numOrNull') return v === null ? '澆到滿' : v + ' ' + def.unit;
+    if (def.type === 'islands') return v.length ? v.join('、') : '（無）';
+    if (def.type === 'machines') return v.length ? v.join('、') : '（無）';
+    return v + (def.unit ? ' ' + def.unit : '');
+  }
+
+  // 設定視窗（腳本自己建的元素，只用 textContent 寫內容）
+  let settingsPanel = null;
+  const settingsRows = new Map(); // 參數名 → { def, row, input(s), msg, mark }
+  let settingsNote = null; // 視窗上方的狀態文字
+
+  function styleBtn(b, primary) {
+    Object.assign(b.style, {
+      padding: '3px 10px',
+      font: 'inherit',
+      cursor: 'pointer',
+      border: 'none',
+      borderRadius: '4px',
+      color: '#fff',
+      background: primary ? '#2e8b3d' : '#555',
+    });
+  }
+
+  // 讓視窗上每個控制項、「已改過」標記都和 CONFIG 現在的值一致
+  function syncSettingsPanel() {
+    if (!settingsPanel) return;
+    for (const [key, r] of settingsRows) {
+      const v = CONFIG[key];
+      const def = r.def;
+      if (def.type === 'bool') r.input.checked = !!v;
+      else if (def.type === 'enum') r.input.value = v;
+      else if (def.type === 'islands') r.input.value = v.join(', ');
+      else if (def.type === 'machines') for (const [id, cb] of r.boxes) cb.checked = v.includes(id);
+      else r.input.value = v === null ? '' : String(v);
+      const changed = Object.prototype.hasOwnProperty.call(overrides, key);
+      r.mark.textContent = changed ? '已改過' : '';
+      r.row.style.background = changed ? 'rgba(46, 139, 61, 0.18)' : 'transparent';
+    }
+  }
+
+  function closeSettingsPanel() {
+    if (!settingsPanel) return;
+    settingsPanel.remove();
+    settingsPanel = null;
+    settingsRows.clear();
+  }
+
+  function toggleSettingsPanel() {
+    if (settingsPanel) closeSettingsPanel();
+    else openSettingsPanel();
+  }
+
+  function openSettingsPanel() {
+    if (settingsPanel) return;
+    const g = game();
+    const box = document.createElement('div');
+    box.id = SETTINGS_PANEL_ID;
+    Object.assign(box.style, {
+      position: 'fixed',
+      top: '8px',
+      right: '8px',
+      bottom: '8px',
+      width: '460px',
+      maxWidth: 'calc(100vw - 16px)',
+      zIndex: '2147483647',
+      display: 'flex',
+      flexDirection: 'column',
+      font: '13px/1.5 sans-serif',
+      color: '#fff',
+      background: 'rgba(20, 24, 32, 0.97)',
+      borderRadius: '8px',
+      boxShadow: '0 4px 24px rgba(0, 0, 0, 0.6)',
+    });
+    box.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation(); // 不讓遊戲也把它當成「關視窗」
+        closeSettingsPanel();
+      }
+    });
+
+    const head = document.createElement('div');
+    Object.assign(head.style, { padding: '10px 12px 6px', borderBottom: '1px solid #444' });
+    const title = document.createElement('div');
+    title.textContent = 'SkyFarm 輔助設定　v' + VERSION;
+    Object.assign(title.style, { fontWeight: '700', fontSize: '15px' });
+    const intro = document.createElement('div');
+    intro.textContent =
+      '改了立刻生效，並存在這個瀏覽器（只存和預設不同的值，兩台電腦各自設定）。「開關」和「作物」不會記住。' +
+      '標示「會花金幣」的項目都有金幣底線。按 Esc 或再按一次 ' + keyLabel(CONFIG.configKey) + ' 關閉。';
+    Object.assign(intro.style, { fontSize: '12px', opacity: '0.8', margin: '2px 0' });
+    settingsNote = document.createElement('div');
+    Object.assign(settingsNote.style, { fontSize: '12px', color: '#ffd27a', minHeight: '16px' });
+    head.append(title, intro, settingsNote);
+
+    const body = document.createElement('div');
+    Object.assign(body.style, { flex: '1', overflowY: 'auto', padding: '4px 12px' });
+
+    for (const [group, items] of SCHEMA) {
+      const h = document.createElement('div');
+      h.textContent = group;
+      Object.assign(h.style, { fontWeight: '700', margin: '12px 0 4px', paddingBottom: '2px', borderBottom: '1px solid #555', color: '#9fd3ff' });
+      body.appendChild(h);
+      for (const def0 of items) body.appendChild(buildSettingRow(Object.assign({ group }, def0), g));
+    }
+
+    // 快速鍵（只顯示，不能在這裡改）
+    const hk = document.createElement('div');
+    hk.textContent = '快速鍵（要改請編輯腳本 CONFIG 裡的 toggleKey 等）';
+    Object.assign(hk.style, { fontWeight: '700', margin: '12px 0 4px', paddingBottom: '2px', borderBottom: '1px solid #555', color: '#9fd3ff' });
+    body.appendChild(hk);
+    const hkList = document.createElement('div');
+    hkList.textContent = HOTKEY_NAMES.map(([k, name]) => keyLabel(CONFIG[k]) + ' ' + name).join('　｜　');
+    Object.assign(hkList.style, { fontSize: '12px', opacity: '0.85', paddingBottom: '8px' });
+    body.appendChild(hkList);
+
+    const foot = document.createElement('div');
+    Object.assign(foot.style, { display: 'flex', gap: '8px', justifyContent: 'flex-end', padding: '8px 12px', borderTop: '1px solid #444' });
+    const resetAll = document.createElement('button');
+    resetAll.type = 'button';
+    resetAll.textContent = '全部恢復預設';
+    styleBtn(resetAll, false);
+    let armed = false;
+    resetAll.addEventListener('click', () => {
+      if (!armed) {
+        armed = true;
+        resetAll.textContent = '再按一次確認';
+        return;
+      }
+      armed = false;
+      resetAll.textContent = '全部恢復預設';
+      const r = resetAllSettings();
+      settingsNote.textContent = r.saved ? '已全部恢復預設' : '已恢復預設，但寫不進瀏覽器儲存空間（只在這次載入有效）';
+    });
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.textContent = '關閉';
+    styleBtn(closeBtn, true);
+    closeBtn.addEventListener('click', closeSettingsPanel);
+    foot.append(resetAll, closeBtn);
+
+    box.append(head, body, foot);
+    document.body.appendChild(box);
+    settingsPanel = box;
+    syncSettingsPanel();
+  }
+
+  // 一個參數一列：名稱＋控制項＋「已改過」標記＋恢復預設，下面是說明、預設值與錯誤訊息
+  function buildSettingRow(def, g) {
+    const row = document.createElement('div');
+    Object.assign(row.style, { padding: '5px 4px', borderRadius: '4px' });
+    const top = document.createElement('div');
+    Object.assign(top.style, { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' });
+    const label = document.createElement('span');
+    label.textContent = def.label;
+    Object.assign(label.style, { fontWeight: '600', flex: '1 1 140px' });
+    top.appendChild(label);
+
+    const entry = { def, row, input: null, boxes: null, msg: null, mark: null };
+    const msg = document.createElement('div');
+    Object.assign(msg.style, { color: '#ff9a9a', fontSize: '12px', minHeight: '0' });
+    entry.msg = msg;
+
+    // 套用一個控制項的值：成功清掉錯誤訊息；失敗顯示原因並把控制項放回目前的值
+    const commit = (raw) => {
+      const r = applySetting(def.key, raw);
+      msg.textContent = r.ok ? '' : r.why;
+      if (!r.ok) syncSettingsPanel();
+      if (settingsNote) settingsNote.textContent = r.ok && !r.saved ? '寫不進瀏覽器儲存空間，這項設定只在這次載入有效' : '';
+    };
+    const inputStyle = { font: 'inherit', color: '#000', background: '#fff', border: '1px solid #888', borderRadius: '4px', padding: '2px 6px' };
+
+    if (def.type === 'bool') {
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.addEventListener('change', () => commit(!!cb.checked));
+      entry.input = cb;
+      top.appendChild(cb);
+    } else if (def.type === 'enum') {
+      const sel = document.createElement('select');
+      Object.assign(sel.style, inputStyle);
+      for (const [value, text] of def.options) {
+        const o = document.createElement('option');
+        o.value = value;
+        o.textContent = text;
+        sel.appendChild(o);
+      }
+      sel.addEventListener('change', () => commit(sel.value));
+      entry.input = sel;
+      top.appendChild(sel);
+    } else if (def.type === 'islands') {
+      const inp = document.createElement('input');
+      inp.type = 'text';
+      inp.maxLength = 60;
+      inp.placeholder = '例如 2, 3';
+      Object.assign(inp.style, inputStyle, { width: '110px' });
+      inp.addEventListener('change', () => {
+        const parts = String(inp.value).split(/[,，、\s]+/).filter(Boolean);
+        commit(parts.map((x) => Number(x)));
+      });
+      entry.input = inp;
+      top.appendChild(inp);
+    } else if (def.type === 'machines') {
+      entry.boxes = new Map();
+      const ids = new Set(CONFIG.loadMachineIds.concat(DEFAULTS.loadMachineIds));
+      if (g && g.CFG && g.CFG.machines) for (const id of Object.keys(g.CFG.machines)) ids.add(id);
+      const list = document.createElement('div');
+      Object.assign(list.style, { width: '100%', display: 'flex', flexWrap: 'wrap', gap: '4px 12px' });
+      for (const id of ids) {
+        if (!/^[a-z0-9_]{1,40}$/.test(id)) continue;
+        const lab = document.createElement('label');
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        const nm = g && g.CFG && g.CFG.machines && g.CFG.machines[id] && g.CFG.machines[id].name;
+        const text = document.createElement('span');
+        text.textContent = (nm ? nm + '（' + id + '）' : id);
+        cb.addEventListener('change', () => {
+          const picked = [];
+          for (const [mid, box] of entry.boxes) if (box.checked) picked.push(mid);
+          commit(picked);
+        });
+        lab.append(cb, text);
+        entry.boxes.set(id, cb);
+        list.appendChild(lab);
+      }
+      entry.input = list;
+      top.appendChild(list);
+    } else {
+      const inp = document.createElement('input');
+      inp.type = 'number';
+      inp.min = String(def.min);
+      inp.max = String(def.max);
+      inp.step = def.type === 'int' ? '1' : '0.5';
+      Object.assign(inp.style, inputStyle, { width: '92px' });
+      inp.addEventListener('change', () => {
+        const txt = String(inp.value).trim();
+        if (txt === '') commit(def.type === 'numOrNull' ? null : NaN);
+        else commit(Number(txt));
+      });
+      entry.input = inp;
+      top.appendChild(inp);
+      if (def.unit) {
+        const u = document.createElement('span');
+        u.textContent = def.unit;
+        Object.assign(u.style, { fontSize: '12px', opacity: '0.7' });
+        top.appendChild(u);
+      }
+    }
+
+    const mark = document.createElement('span');
+    Object.assign(mark.style, { fontSize: '11px', color: '#7be08d', minWidth: '40px' });
+    entry.mark = mark;
+    top.appendChild(mark);
+    const reset = document.createElement('button');
+    reset.type = 'button';
+    reset.textContent = '↺';
+    reset.title = '恢復預設（' + fmtSetting(def, DEFAULTS[def.key]) + '）';
+    styleBtn(reset, false);
+    reset.addEventListener('click', () => {
+      resetSetting(def.key);
+      msg.textContent = '';
+    });
+    top.appendChild(reset);
+    entry.reset = reset;
+
+    const desc = document.createElement('div');
+    desc.textContent = def.desc + '　預設：' + fmtSetting(def, DEFAULTS[def.key]) + '。';
+    Object.assign(desc.style, { fontSize: '12px', opacity: '0.72' });
+    row.append(top, desc, msg);
+    settingsRows.set(def.key, entry);
+    return row;
+  }
+
   // ───────────────────────── 組合鍵 ─────────────────────────
 
   // 在 window 的捕獲階段最先處理；只接受使用者真實按鍵，不接受頁面程式合成的事件
@@ -2462,10 +2987,12 @@
       const isCrop = matchKey(e, CONFIG.cropKey);
       const isProbe = matchKey(e, CONFIG.probeKey);
       const isIsland = matchKey(e, CONFIG.islandKey);
-      if (!isToggle && !isCrop && !isProbe && !isIsland) return;
+      const isConfig = matchKey(e, CONFIG.configKey);
+      if (!isToggle && !isCrop && !isProbe && !isIsland && !isConfig) return;
       e.preventDefault();
       e.stopImmediatePropagation();
       if (isProbe) runProbe();
+      else if (isConfig) toggleSettingsPanel();
       else if (panel) closePanel(); // 輸入框開著時，開關鍵與設定鍵都當作「取消」
       else if (isIsland) toggleIslandMode();
       else if (isCrop) openCropPanel(false);
@@ -2476,7 +3003,8 @@
 
   // ───────────────────────── 啟動 ─────────────────────────
 
-  log('v' + VERSION + ' 已載入（預設 OFF）', stripUrl(location.href));
+  const restored = loadSettings(); // 讀回你在設定視窗改過的值（沒有就用預設）
+  log('v' + VERSION + ' 已載入（預設 OFF）' + (restored ? '，套用了 ' + restored + ' 項自訂設定' : ''), stripUrl(location.href));
 
   if (document.body) initBadge();
   else document.addEventListener('DOMContentLoaded', initBadge, { once: true });
