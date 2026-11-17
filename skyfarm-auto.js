@@ -3,14 +3,15 @@
  *
  * 由 Tampermonkey 透過 @require 載入（設定見 skyfarm-auto.loader.user.js）。
  *
- * 功能（0.16.0）：
+ * 功能（0.17.0）：
  *   - Alt+Shift+S：跳出輸入框，輸入「這次要自動種植的作物」（中文名稱或代號皆可）
  *   - Alt+Shift+A：開啟／關閉自動功能（每次載入頁面一律預設 OFF，不會記住 ON）；
  *                  還沒設定作物就按開啟時，會先跳出輸入框，確認後才開始
  *   - Alt+Shift+D：唯讀診斷，輸出頁面與遊戲狀態摘要並複製到剪貼簿
- *   - Alt+Shift+C：開關「設定視窗」——CONFIG 裡可以調的參數都在裡面，有說明與預設值，改了立刻生效；
+ *   - Alt+Shift+G：開關「設定視窗」——CONFIG 裡可以調的參數都在裡面，有說明與預設值，改了立刻生效；
  *                  改過的值存在這個網站的 localStorage 的一個鍵（skyfarm-auto-settings），下次載入自動套用
- *                  （開關、作物、Alt+Shift+F 的暫時切換不存；快速鍵不能在視窗裡改）。新增 CONFIG 參數要同時加進 SCHEMA。
+ *                  （開關、作物、Alt+Shift+F 的暫時切換不存）。標籤左邊的「⚙」按鈕也能開，不靠快速鍵；
+ *                  快速鍵可以在視窗最下面的「快速鍵」那組改（要有 Alt、不含 Ctrl、彼此不重複）。新增 CONFIG 參數要同時加進 SCHEMA。
  *   - 設定的作物不會被記住（重新整理頁面就要重設），目前作物顯示在右下角標籤
  *   - 自動功能開啟後，只處理「設定的作物」，每個週期依序處理：
  *       1. 遊戲跳出「農產倉庫滿了」視窗 → 按「先不收成」，並標記要賣出
@@ -86,10 +87,11 @@
   'use strict';
 
   const NAME = 'SkyFarmAuto';
-  const VERSION = '0.16.0';
+  const VERSION = '0.17.0';
   const BADGE_ID = 'skyfarm-auto-badge';
   const PANEL_ID = 'skyfarm-auto-panel';
   const SETTINGS_PANEL_ID = 'skyfarm-auto-settings-panel';
+  const GEAR_ID = 'skyfarm-auto-gear';
 
   // ───────────────────────── 設定（想改行為只需要改這裡）─────────────────────────
   const CONFIG = {
@@ -98,7 +100,7 @@
     cropKey: { code: 'KeyS', alt: true, shift: true, ctrl: false },
     probeKey: { code: 'KeyD', alt: true, shift: true, ctrl: false },
     islandKey: { code: 'KeyF', alt: true, shift: true, ctrl: false }, // 切換「全島輪流／只做畫面上這座」
-    configKey: { code: 'KeyC', alt: true, shift: true, ctrl: false }, // 開關「設定視窗」
+    configKey: { code: 'KeyG', alt: true, shift: true, ctrl: false }, // 開關「設定視窗」（Alt+Shift+C 會和其他套件衝突）
 
     tickMs: 400, // 每個週期的間隔（毫秒）
     maxActionsPerTick: 3, // 每個週期最多收成／播種幾格（遊戲每次操作都會存檔，不宜一次太多）
@@ -234,6 +236,8 @@
   let islandHint = ''; // 寫在狀態列的島嶼說明
   let islandLine = ''; // 完整標籤的島嶼那一行
   let islandShort = ''; // 小方格的第三行
+  let gearBtn = null; // 標籤旁邊的「⚙」按鈕（用滑鼠開設定視窗，不靠快速鍵）
+  let hotkeyCapture = null; // 正在錄快速鍵時：{ key, timer }
 
   // ───────────────────────── 遊戲介面 ─────────────────────────
 
@@ -1967,6 +1971,42 @@
     return el;
   }
 
+  // 標籤左邊的「⚙」按鈕：用滑鼠開關設定視窗，不靠快速鍵（快速鍵可能被別的套件占用）
+  function createGear() {
+    const b = document.createElement('button');
+    b.id = GEAR_ID;
+    b.type = 'button';
+    b.textContent = '⚙';
+    Object.assign(b.style, {
+      position: 'fixed',
+      right: '68px',
+      bottom: '8px',
+      zIndex: '2147483647',
+      width: '28px',
+      height: '28px',
+      padding: '0',
+      font: '16px/1 sans-serif',
+      color: '#fff',
+      background: 'rgba(0, 0, 0, 0.7)',
+      border: 'none',
+      borderRadius: '6px',
+      cursor: 'pointer',
+    });
+    b.addEventListener('click', (e) => {
+      if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+      toggleSettingsPanel();
+    });
+    document.body.appendChild(b);
+    return b;
+  }
+
+  // 齒輪跟著標籤走（標籤展開、縮小時寬度不同）
+  function placeGear() {
+    if (!gearBtn || !badge) return;
+    gearBtn.style.right = 8 + (badge.offsetWidth || 52) + 6 + 'px';
+    gearBtn.title = '設定視窗（' + keyLabel(CONFIG.configKey) + '）';
+  }
+
   // 快速鍵說明；三個鍵的修飾鍵相同時合併顯示，例如「Alt+Shift＋A 開關／S 作物／D 診斷」
   function hotkeyLine() {
     const keys = [
@@ -2015,6 +2055,7 @@
         (enabled ? status || '運作中' : '自動：OFF（' + keyLabel(CONFIG.toggleKey) + ' 開啟）') + '\n點一下展開';
       badge.textContent = enabled ? (paused ? '暫停' : 'ON') + '\n✓' + totalActions() + (islandShort ? '\n' + islandShort : '') : 'OFF';
       lastRenderAt = Date.now();
+      placeGear();
       return;
     }
     Object.assign(badge.style, {
@@ -2052,11 +2093,13 @@
     if (note) lines.push(note);
     badge.textContent = lines.join('\n');
     lastRenderAt = Date.now();
+    placeGear();
   }
 
   function initBadge() {
     if (document.getElementById(BADGE_ID)) return;
     badge = createBadge();
+    gearBtn = createGear();
     renderBadge(true);
   }
 
@@ -2466,9 +2509,10 @@
 
   // ───────────────────────── 設定視窗與保存 ─────────────────────────
   //
-  // Alt+Shift+C 開關「設定視窗」：列出 CONFIG 裡可以調的參數、每個的說明與預設值，改了立刻生效。
+  // Alt+Shift+G 開關「設定視窗」：列出 CONFIG 裡可以調的參數、每個的說明與預設值，改了立刻生效。
   // 改過的值（只有「和預設不同」的）存在這個網站的 localStorage 的一個鍵（SETTINGS_KEY）裡，下次載入時讀回來；
-  // 「開關（ON／OFF）」「設定的作物」「Alt+Shift+F 的全島輪流⇄只做這座」不存。快速鍵本身不能在視窗裡改（改錯會把自己鎖在外面）。
+  // 「開關（ON／OFF）」「設定的作物」「Alt+Shift+F 的全島輪流⇄只做這座」不存。快速鍵可以在視窗最下面改（按「改」再按新組合鍵）；
+  // 就算改到沒辦法用，標籤旁的「⚙」按鈕一定開得了視窗，所以不會把自己鎖在外面。
   // 資安：
   //   - 讀回來時只看 SCHEMA 列出的參數（不是照存下來的 JSON 的鍵去套，所以 __proto__ 之類的鍵進不來），
   //     每一項都驗型別與範圍，不合的整項忽略；JSON 壞掉、超過 4 KB、瀏覽器不讓用儲存空間，都不會丟錯。
@@ -2479,6 +2523,15 @@
 
   const bool = (key, label, desc) => ({ key, type: 'bool', label, desc });
   const num = (key, label, desc, min, max, unit, type) => ({ key, type: type || 'int', label, desc, min, max, unit: unit || '' });
+
+  // 快速鍵（也是設定表的一組；要有 Alt，不能含 Ctrl／Win，兩兩不能重複）
+  const HOTKEY_NAMES = [
+    ['toggleKey', '開關（ON／OFF）', '開啟或關閉自動功能。'],
+    ['cropKey', '設定作物', '開啟「設定作物」輸入框。'],
+    ['probeKey', '診斷', '輸出唯讀診斷（摘要顯示在標籤上，完整內容複製到剪貼簿與 Console）。'],
+    ['islandKey', '全島輪流⇄只做畫面上這座', '暫時切換島嶼模式（只在這次載入有效，不存）。'],
+    ['configKey', '設定視窗', '開關這個設定視窗。'],
+  ];
 
   // 參數表：[群組名, [參數…]]。每個參數的 label 是畫面上的名稱，desc 是說明；min／max 是允許的範圍
   const SCHEMA = [
@@ -2554,17 +2607,12 @@
       num('userSwitchHoldMs', '你手動切島後的暫停時間', '你自己點「農場 N」切島後，這段時間內腳本不會自己切走。', 0, 3600000, SECS),
       { key: 'skipIslands', type: 'islands', label: '不自動切過去的島', desc: '填島的編號（從 1 起算，用逗號隔開，例如 2, 3）。這些島不會被自動切過去；你自己看著那座時照常處理。' },
     ]],
+    ['快速鍵', HOTKEY_NAMES.map(([key, name, what]) => ({ key, type: 'hotkey', label: name, desc: what })),
+      '按該列的「改」，再按下新的組合鍵就套用並存起來（Esc 取消，10 秒沒按自動取消）。要有 Alt（可加 Shift），不能含 Ctrl 或 Win／Cmd，五個快速鍵不能重複。' +
+      '如果某個組合鍵被別的瀏覽器套件占用，網頁收不到那個按鍵，就換一個。就算快速鍵失效，標籤旁的「⚙」按鈕也一定開得了這個視窗。'],
   ];
   const SETTING_DEFS = SCHEMA.flatMap(([group, items]) => items.map((d) => Object.assign({ group }, d)));
   const defOf = new Map(SETTING_DEFS.map((d) => [d.key, d]));
-  const HOTKEY_NAMES = [
-    ['toggleKey', '開關'],
-    ['cropKey', '設定作物'],
-    ['probeKey', '診斷'],
-    ['islandKey', '全島輪流⇄只做這座'],
-    ['configKey', '設定視窗'],
-  ];
-
   const overrides = {}; // 參數名 → 值：只放「和預設不同」的（也是存進 localStorage 的內容）
   const cloneVal = (v) => JSON.parse(JSON.stringify(v));
   const sameVal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -2597,6 +2645,19 @@
         if (!v.every((id) => typeof id === 'string' && /^[a-z0-9_]{1,40}$/.test(id))) return bad('機器代號只能是小寫英文、數字、底線');
         return good(Array.from(new Set(v)));
       }
+      case 'hotkey': {
+        if (!v || typeof v !== 'object' || Array.isArray(v)) return bad('要是按鍵組合');
+        const shapeOk =
+          typeof v.code === 'string' &&
+          /^(Key[A-Z]|Digit[0-9]|F([1-9]|1[0-2]))$/.test(v.code) &&
+          typeof v.alt === 'boolean' &&
+          typeof v.shift === 'boolean' &&
+          typeof v.ctrl === 'boolean';
+        if (!shapeOk) return bad('只能是字母、數字或 F1～F12 配上修飾鍵');
+        if (!v.alt) return bad('要同時按住 Alt（單獨的字母或 Ctrl 組合會干擾打字與瀏覽器）');
+        if (v.ctrl) return bad('不能含 Ctrl（Ctrl+Alt 在有些鍵盤上等於 AltGr，會打出字元）');
+        return good({ code: v.code, alt: true, shift: v.shift, ctrl: false });
+      }
       default:
         return bad('未知的參數型別');
     }
@@ -2604,6 +2665,10 @@
 
   // 兩個參數之間的關係（單看一個值驗不出來的）。回傳不合的原因，合就回傳 ''
   function crossCheck(key, value) {
+    if (HOTKEY_NAMES.some(([k]) => k === key)) {
+      const other = HOTKEY_NAMES.find(([k]) => k !== key && sameVal(CONFIG[k], value));
+      if (other) return '和「' + other[1] + '」的快速鍵重複';
+    }
     if (key === 'petFoodTargetPerPet' && value < CONFIG.petFoodLowPerPet) return '補貨目標不能小於低水位（' + CONFIG.petFoodLowPerPet + '）';
     if (key === 'petFoodLowPerPet' && value > CONFIG.petFoodTargetPerPet) return '低水位不能大於補貨目標（' + CONFIG.petFoodTargetPerPet + '）';
     if (key === 'waterUpTo' && value !== null && value < CONFIG.waterBelow) return '不能小於「開始澆的濕度」（' + CONFIG.waterBelow + '）';
@@ -2653,6 +2718,8 @@
     });
     if (CONFIG.petFoodTargetPerPet < CONFIG.petFoodLowPerPet) resetKeys(['petFoodTargetPerPet', 'petFoodLowPerPet']);
     if (CONFIG.waterUpTo !== null && CONFIG.waterUpTo < CONFIG.waterBelow) resetKeys(['waterUpTo', 'waterBelow']);
+    const dupKeys = HOTKEY_NAMES.some(([a], i) => HOTKEY_NAMES.some(([b], j) => j > i && sameVal(CONFIG[a], CONFIG[b])));
+    if (dupKeys) resetKeys(HOTKEY_NAMES.map(([k]) => k)); // 存下來的快速鍵彼此重複：全部回預設
     return n;
   }
 
@@ -2711,6 +2778,7 @@
     if (def.type === 'numOrNull') return v === null ? '澆到滿' : v + ' ' + def.unit;
     if (def.type === 'islands') return v.length ? v.join('、') : '（無）';
     if (def.type === 'machines') return v.length ? v.join('、') : '（無）';
+    if (def.type === 'hotkey') return keyLabel(v);
     return v + (def.unit ? ' ' + def.unit : '');
   }
 
@@ -2738,6 +2806,7 @@
       const v = CONFIG[key];
       const def = r.def;
       if (def.type === 'bool') r.input.checked = !!v;
+      else if (def.type === 'hotkey') r.input.textContent = hotkeyCapture && hotkeyCapture.key === key ? '請按新的組合鍵（Esc 取消）…' : keyLabel(v);
       else if (def.type === 'enum') r.input.value = v;
       else if (def.type === 'islands') r.input.value = v.join(', ');
       else if (def.type === 'machines') for (const [id, cb] of r.boxes) cb.checked = v.includes(id);
@@ -2750,9 +2819,45 @@
 
   function closeSettingsPanel() {
     if (!settingsPanel) return;
+    cancelHotkeyCapture();
     settingsPanel.remove();
     settingsPanel = null;
     settingsRows.clear();
+  }
+
+  // ───── 錄快速鍵：按「改」之後，下一個真實的、不是單獨修飾鍵的按鍵組合就是新的快速鍵 ─────
+  const MOD_CODES = new Set(['AltLeft', 'AltRight', 'ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight', 'MetaLeft', 'MetaRight', 'OSLeft', 'OSRight', 'CapsLock', 'NumLock']);
+
+  function cancelHotkeyCapture() {
+    if (!hotkeyCapture) return;
+    clearTimeout(hotkeyCapture.timer);
+    hotkeyCapture = null;
+    syncSettingsPanel();
+  }
+
+  function startHotkeyCapture(key) {
+    cancelHotkeyCapture();
+    hotkeyCapture = { key, timer: setTimeout(cancelHotkeyCapture, 10000) }; // 10 秒沒按就自動取消
+    const r = settingsRows.get(key);
+    if (r) r.msg.textContent = '';
+    syncSettingsPanel();
+  }
+
+  // 錄快速鍵期間，按鍵一律被這裡吃掉（不會觸發其他快速鍵）
+  function captureHotkey(e) {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (MOD_CODES.has(e.code)) return; // 只按了 Alt、Shift…：繼續等
+    const key = hotkeyCapture.key;
+    const row0 = settingsRows.get(key);
+    cancelHotkeyCapture();
+    if (e.code === 'Escape') return;
+    if (e.metaKey) {
+      if (row0) row0.msg.textContent = '不能含 Win／Cmd 鍵';
+      return;
+    }
+    const r = applySetting(key, { code: e.code, alt: !!e.altKey, shift: !!e.shiftKey, ctrl: !!e.ctrlKey });
+    if (row0) row0.msg.textContent = r.ok ? '' : r.why;
   }
 
   function toggleSettingsPanel() {
@@ -2796,7 +2901,7 @@
     const intro = document.createElement('div');
     intro.textContent =
       '改了立刻生效，並存在這個瀏覽器（只存和預設不同的值，兩台電腦各自設定）。「開關」和「作物」不會記住。' +
-      '標示「會花金幣」的項目都有金幣底線。按 Esc 或再按一次 ' + keyLabel(CONFIG.configKey) + ' 關閉。';
+      '標示「會花金幣」的項目都有金幣底線。按 Esc 或再按一次 ' + keyLabel(CONFIG.configKey) + ' 關閉；快速鍵可以在最下面「快速鍵」那組改。';
     Object.assign(intro.style, { fontSize: '12px', opacity: '0.8', margin: '2px 0' });
     settingsNote = document.createElement('div');
     Object.assign(settingsNote.style, { fontSize: '12px', color: '#ffd27a', minHeight: '16px' });
@@ -2805,23 +2910,19 @@
     const body = document.createElement('div');
     Object.assign(body.style, { flex: '1', overflowY: 'auto', padding: '4px 12px' });
 
-    for (const [group, items] of SCHEMA) {
+    for (const [group, items, note] of SCHEMA) {
       const h = document.createElement('div');
       h.textContent = group;
       Object.assign(h.style, { fontWeight: '700', margin: '12px 0 4px', paddingBottom: '2px', borderBottom: '1px solid #555', color: '#9fd3ff' });
       body.appendChild(h);
+      if (note) {
+        const n = document.createElement('div');
+        n.textContent = note;
+        Object.assign(n.style, { fontSize: '12px', opacity: '0.8', padding: '2px 4px 4px' });
+        body.appendChild(n);
+      }
       for (const def0 of items) body.appendChild(buildSettingRow(Object.assign({ group }, def0), g));
     }
-
-    // 快速鍵（只顯示，不能在這裡改）
-    const hk = document.createElement('div');
-    hk.textContent = '快速鍵（要改請編輯腳本 CONFIG 裡的 toggleKey 等）';
-    Object.assign(hk.style, { fontWeight: '700', margin: '12px 0 4px', paddingBottom: '2px', borderBottom: '1px solid #555', color: '#9fd3ff' });
-    body.appendChild(hk);
-    const hkList = document.createElement('div');
-    hkList.textContent = HOTKEY_NAMES.map(([k, name]) => keyLabel(CONFIG[k]) + ' ' + name).join('　｜　');
-    Object.assign(hkList.style, { fontSize: '12px', opacity: '0.85', paddingBottom: '8px' });
-    body.appendChild(hkList);
 
     const foot = document.createElement('div');
     Object.assign(foot.style, { display: 'flex', gap: '8px', justifyContent: 'flex-end', padding: '8px 12px', borderTop: '1px solid #444' });
@@ -2909,6 +3010,17 @@
       });
       entry.input = inp;
       top.appendChild(inp);
+    } else if (def.type === 'hotkey') {
+      const txt = document.createElement('span');
+      Object.assign(txt.style, { background: '#333', padding: '2px 8px', borderRadius: '4px', fontSize: '12px' });
+      const chg = document.createElement('button');
+      chg.type = 'button';
+      chg.textContent = '改';
+      styleBtn(chg, false);
+      chg.addEventListener('click', () => startHotkeyCapture(def.key));
+      entry.input = txt;
+      entry.change = chg;
+      top.append(txt, chg);
     } else if (def.type === 'machines') {
       entry.boxes = new Map();
       const ids = new Set(CONFIG.loadMachineIds.concat(DEFAULTS.loadMachineIds));
@@ -2991,6 +3103,10 @@
     'keydown',
     (e) => {
       if (!e.isTrusted || e.repeat) return;
+      if (hotkeyCapture) {
+        captureHotkey(e); // 正在錄新的快速鍵：這個按鍵只給它
+        return;
+      }
       const isToggle = matchKey(e, CONFIG.toggleKey);
       const isCrop = matchKey(e, CONFIG.cropKey);
       const isProbe = matchKey(e, CONFIG.probeKey);

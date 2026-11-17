@@ -29,7 +29,7 @@ const FUNCS = [
 const CONSTS = ['CONFIG', 'VERSION', 'NAME', 'BADGE_ID', 'PANEL_ID', 'cooldown', 'wetting', 'islandState',
   'SCHEMA', 'SETTING_DEFS', 'DEFAULTS', 'overrides', 'SETTINGS_KEY', 'SETTINGS_PANEL_ID', 'HOTKEY_NAMES', 'settingsRows'];
 const STATE = [
-  ['enabled', false], ['status', false], ['note', false], ['stats', false], ['badge', false], ['collapsed', true], ['panel', false], ['settingsPanel', false],
+  ['enabled', false], ['status', false], ['note', false], ['stats', false], ['badge', false], ['collapsed', true], ['panel', false], ['settingsPanel', false], ['hotkeyCapture', false], ['gearBtn', false],
   ['homeIsland', false], ['expectedCur', false], ['holdUntil', true], ['islandHint', false], ['islandLine', false],
   ['targetCrop', true], ['needSell', true], ['sellBlockedUntil', true], ['lastActionAt', true], ['timer', false],
 ];

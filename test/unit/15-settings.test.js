@@ -1,5 +1,5 @@
 'use strict';
-// 設定視窗（Alt+Shift+C）與保存（使用者 2026-11-17 要求：把可以用 config 設定的參數做成介面、說明每個參數；
+// 設定視窗（Alt+Shift+G）與保存（使用者 2026-11-17 要求：把可以用 config 設定的參數做成介面、說明每個參數；
 // 保存方式選「存在瀏覽器」：localStorage 的一個鍵，只存和預設不同的值，讀回來時嚴格驗證）。
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -15,21 +15,21 @@ const withStorage = (initial, opts, o = {}, cfg = {}) => {
   return { ctx, storage };
 };
 const stored = (storage) => (storage.m.has(KEY) ? JSON.parse(storage.m.get(KEY)) : null);
-const openPanel = (ctx) => { ctx.env.key('KeyC'); return ctx.t.settingsPanel; };
+const openPanel = (ctx) => { ctx.env.key('KeyG'); return ctx.t.settingsPanel; };
 const row = (ctx, key) => ctx.t.settingsRows.get(key);
 const setNum = (ctx, key, text) => { const r = row(ctx, key); r.input.value = text; r.input.dispatch('change'); return r; };
 const setBox = (ctx, key, on) => { const r = row(ctx, key); r.input.checked = on; r.input.dispatch('change'); return r; };
 
 // ───── 設定表本身 ─────
 
-test('設定表涵蓋 CONFIG 的每一個參數（快速鍵除外），而且沒有多出不存在的參數', () => {
+test('設定表涵蓋 CONFIG 的每一個參數（含快速鍵），而且沒有多出不存在的參數', () => {
   const { t } = farm({});
   const hotkeys = new Set(t.HOTKEY_NAMES.map(([k]) => k));
-  const configKeys = Object.keys(t.DEFAULTS).filter((k) => !hotkeys.has(k));
+  const configKeys = Object.keys(t.DEFAULTS);
   const schemaKeys = t.SETTING_DEFS.map((d) => d.key);
   assert.deepEqual([...schemaKeys].sort(), [...configKeys].sort(), '新增 CONFIG 參數時，要同時在設定表加一項（名稱、說明、範圍）');
   assert.equal(new Set(schemaKeys).size, schemaKeys.length, '參數名不重複');
-  for (const k of hotkeys) assert.ok(t.CONFIG[k] && t.CONFIG[k].code, k + ' 是快速鍵');
+  for (const k of hotkeys) assert.ok(t.CONFIG[k] && t.CONFIG[k].code && schemaKeys.includes(k), k + ' 是快速鍵，也在設定表裡');
 });
 
 test('每個參數都有名稱、說明、群組、合法的型別與範圍，而且預設值通過自己的驗證', () => {
@@ -38,7 +38,7 @@ test('每個參數都有名稱、說明、群組、合法的型別與範圍，�
     assert.ok(d.label && d.label.length >= 2, d.key + ' 要有名稱');
     assert.ok(d.desc && d.desc.length >= 8, d.key + ' 要有說明');
     assert.ok(d.group, d.key + ' 要有群組');
-    assert.ok(['bool', 'int', 'num', 'numOrNull', 'enum', 'islands', 'machines'].includes(d.type), d.key + ' 型別');
+    assert.ok(['bool', 'int', 'num', 'numOrNull', 'enum', 'islands', 'machines', 'hotkey'].includes(d.type), d.key + ' 型別');
     if (['int', 'num', 'numOrNull'].includes(d.type)) {
       assert.ok(Number.isFinite(d.min) && Number.isFinite(d.max) && d.min <= d.max, d.key + ' 要有範圍');
     }
@@ -54,9 +54,9 @@ test('預設值快照 = 載入時的 CONFIG；改了 CONFIG 之後快照不變',
   assert.equal(t.DEFAULTS.autoSell, true);
 });
 
-test('快速鍵預設值釘住：設定視窗是 Alt+Shift+C（使用者 2026-11-17 要求）', () => {
+test('快速鍵預設值釘住：設定視窗是 Alt+Shift+G（使用者 2026-11-17 要求）', () => {
   const { t } = farm({});
-  assert.deepEqual({ ...t.CONFIG.configKey }, { code: 'KeyC', alt: true, shift: true, ctrl: false });
+  assert.deepEqual({ ...t.CONFIG.configKey }, { code: 'KeyG', alt: true, shift: true, ctrl: false });
 });
 
 // ───── 驗證 ─────
@@ -250,14 +250,14 @@ test('設定真的改變行為：關掉 autoSell 後，倉庫快滿也不開倉�
 
 // ───── 視窗 ─────
 
-test('Alt+Shift+C 開關視窗；Esc、「關閉」鈕、再按一次也能關；視窗是腳本自己建的元素', () => {
+test('Alt+Shift+G 開關視窗；Esc、「關閉」鈕、再按一次也能關；視窗是腳本自己建的元素', () => {
   const ctx = farm({});
   assert.equal(ctx.t.settingsPanel, null);
   const p = openPanel(ctx);
   assert.ok(p);
   assert.equal(p.id, ctx.t.SETTINGS_PANEL_ID);
   assert.equal(ctx.t.settingsPanel, p);
-  ctx.env.key('KeyC');
+  ctx.env.key('KeyG');
   assert.equal(ctx.t.settingsPanel, null, '再按一次關閉');
   openPanel(ctx);
   ctx.t.settingsPanel.dispatch('keydown', { key: 'Escape' });
@@ -280,8 +280,9 @@ test('視窗每個參數一列：名稱、說明、預設值都寫出來；說�
     assert.ok(desc.includes('預設：' + ctx.t.fmtSetting(d, ctx.t.DEFAULTS[d.key])), d.key + ' 預設值有顯示');
   }
   const all = texts.join('\n');
-  assert.match(all, /Alt\+Shift\+A 開關/);
-  assert.match(all, /Alt\+Shift\+C 設定視窗/, '快速鍵只顯示、不能改');
+  assert.match(all, /開關（ON／OFF）\nAlt\+Shift\+A\n改/, '每個快速鍵一列：名稱、目前的組合鍵、「改」鈕');
+  assert.match(all, /按該列的「改」，再按下新的組合鍵就套用並存起來/, '快速鍵那組有共用說明');
+  assert.match(all, /「⚙」按鈕也一定開得了這個視窗/);
   assert.match(all, /改了立刻生效，並存在這個瀏覽器/);
 });
 
@@ -405,7 +406,7 @@ test('設定視窗開著時腳本照常工作（不暫停）；沒載入遊戲�
   assert.equal(ctx.world.S.inv.weed, 1, '視窗開著，雜草照拔');
   const { load } = require('../helpers/harness');
   const e = load();
-  e.key('KeyC');
+  e.key('KeyG');
   assert.ok(e.t.settingsPanel, '遊戲還沒載入也開得起來');
   assert.ok(e.t.settingsRows.get('loadMachineIds').boxes.get('compost_bin'));
 });
@@ -427,9 +428,9 @@ test('診斷：customSettings 只列出「改過的參數名」（不含值）�
   assert.deepEqual([...farm({}).t.describeGame().customSettings], []);
 });
 
-test('完整標籤的快速鍵說明包含 C 設定', () => {
+test('完整標籤的快速鍵說明包含 G 設定', () => {
   const ctx = farm({});
-  assert.match(ctx.t.badge.textContent, /D 診斷／F 島嶼／C 設定/);
+  assert.match(ctx.t.badge.textContent, /D 診斷／F 島嶼／G 設定/);
 });
 
 // ───── 顧問審查提出的缺口：恢復預設的路徑 ─────
