@@ -10,7 +10,7 @@
  *   - Alt+Shift+D：唯讀診斷，輸出頁面與遊戲狀態摘要並複製到剪貼簿
  *   - Alt+Shift+G：開關「設定視窗」——CONFIG 裡可以調的參數都在裡面，有說明與預設值，改了立刻生效；
  *                  改過的值存在這個網站的 localStorage 的一個鍵（skyfarm-auto-settings），下次載入自動套用
- *                  （開關、作物、Alt+Shift+F 的暫時切換不存）。標籤左邊的「⚙」按鈕也能開，不靠快速鍵；
+ *                  （開關、作物、Alt+Shift+F 的暫時切換不存）。右下角的「⚙」按鈕也能開，不靠快速鍵；
  *                  快速鍵可以在視窗最下面的「快速鍵」那組改（要有 Alt、不含 Ctrl、彼此不重複）。新增 CONFIG 參數要同時加進 SCHEMA。
  *   - 設定的作物不會被記住（重新整理頁面就要重設），目前作物顯示在右下角標籤
  *   - 自動功能開啟後，只處理「設定的作物」，每個週期依序處理：
@@ -1952,7 +1952,7 @@
     el.id = BADGE_ID;
     Object.assign(el.style, {
       position: 'fixed',
-      right: '8px',
+      right: '42px', // 右下角最角落留給「⚙」按鈕（它的位置固定，不會跟著標籤的寬度跑）
       bottom: '8px',
       zIndex: '2147483647',
       color: '#fff',
@@ -1971,7 +1971,7 @@
     return el;
   }
 
-  // 標籤左邊的「⚙」按鈕：用滑鼠開關設定視窗，不靠快速鍵（快速鍵可能被別的套件占用）
+  // 右下角最角落的「⚙」按鈕：用滑鼠開關設定視窗，不靠快速鍵（快速鍵可能被別的套件占用）；標籤在它左邊
   function createGear() {
     const b = document.createElement('button');
     b.id = GEAR_ID;
@@ -1979,7 +1979,7 @@
     b.textContent = '⚙';
     Object.assign(b.style, {
       position: 'fixed',
-      right: '68px',
+      right: '8px', // 固定位置：標籤的寬度一直在變（狀態文字長短不一），齒輪不能跟著跑，不然會跳到別的按鈕上
       bottom: '8px',
       zIndex: '2147483647',
       width: '28px',
@@ -2000,10 +2000,9 @@
     return b;
   }
 
-  // 齒輪跟著標籤走（標籤展開、縮小時寬度不同）
+  // 齒輪的提示文字帶著目前的快速鍵（快速鍵可以在設定視窗裡改）
   function placeGear() {
-    if (!gearBtn || !badge) return;
-    gearBtn.style.right = 8 + (badge.offsetWidth || 52) + 6 + 'px';
+    if (!gearBtn) return;
     gearBtn.title = '設定視窗（' + keyLabel(CONFIG.configKey) + '）';
   }
 

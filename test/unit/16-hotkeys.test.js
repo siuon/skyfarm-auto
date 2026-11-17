@@ -219,16 +219,24 @@ test('標籤旁有「⚙」按鈕：沒有快速鍵也能用滑鼠開關設定�
   assert.equal(ctx.t.settingsPanel, null, '再點一次關閉');
 });
 
-test('齒輪跟著標籤走（標籤寬度變了就換位置），縮成小方格時也還在', () => {
+test('齒輪固定在右下角最角落、標籤在它左邊讓位：標籤寬度怎麼變、展開或縮小，齒輪的位置都不動', () => {
   const ctx = farm({});
-  ctx.t.badge.offsetWidth = 300;
-  ctx.t.renderBadge(false);
-  assert.equal(gear(ctx).style.right, '314px');
+  const pos = () => [gear(ctx).style.right, gear(ctx).style.bottom];
+  assert.deepEqual(pos(), ['8px', '8px']);
+  assert.equal(ctx.t.badge.style.right, '42px', '標籤讓出齒輪的位置（8 + 28 + 6）');
+  for (const w of [52, 120, 300, 355]) {
+    ctx.t.badge.offsetWidth = w;
+    ctx.t.setStatus('狀態文字長短不一：' + 'x'.repeat(w));
+    ctx.t.renderBadge(false);
+    assert.deepEqual(pos(), ['8px', '8px'], '標籤寬度 ' + w);
+  }
   ctx.t.badge.click(); // 縮成小方格
-  ctx.t.badge.offsetWidth = 52;
   ctx.t.renderBadge(false);
-  assert.equal(gear(ctx).style.right, '66px');
-  assert.ok(gear(ctx));
+  assert.deepEqual(pos(), ['8px', '8px'], '小方格');
+  assert.equal(ctx.t.badge.style.right, '42px');
+  ctx.t.badge.click();
+  ctx.env.key('KeyA'); // 開啟自動功能（標籤變成有統計的多行）
+  assert.deepEqual(pos(), ['8px', '8px'], '開啟後');
 });
 
 test('就算快速鍵設成了被占用的組合（網頁收不到），齒輪仍然開得了視窗，並能改回來', () => {
