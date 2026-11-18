@@ -33,6 +33,11 @@ module.exports = {
     { prefix: '#bsbar259 [data-bsgo259]', game: ['bsbar259', 'data-bsgo259'] },
     { prefix: '#ask47 .bs259 #ask47y', game: ['cf47 bs259', 'id="ask47y"'] },
     { prefix: '#ask47 .bs259 #ask47c', game: ['cf47 bs259', 'id="ask47c"'] },
+    // 賣出確認視窗的逐列數量：要留雜草給堆肥桶時，腳本用雜草那一列的「−」把數量調成「庫存 − 保留量」，再逐列回讀確認
+    { prefix: '#ask47 .bs259 .r259', game: ['class="r259 on259" data-id="${id}"'] },
+    { prefix: 'button[data-d="-1"]', game: ['data-d="-1"'] },
+    { prefix: 'input[type=number]', game: ['<input type="number" min="0" max="${R[id].max}" value="${R[id].max}"'] },
+    { prefix: 'input.rc259', game: ['class="rc259"'] },
     // 買耗材時遊戲先跳的「確定要買嗎？」購買確認視窗（沒有 .bs259）；腳本核對標題、價格後才按「確定購買」
     { prefix: '#ask47 #ask47y', game: ['id="ask47y"'] },
     { prefix: '#ask47 #ask47c', game: ['id="ask47c"'] },
@@ -160,6 +165,15 @@ module.exports = {
     {
       name: '批次賣出：任何有售價的物品（雜草、糞便也是）每列都有勾選框，確認視窗預設全數賣出',
       game: ['if (!id || !CFG.items[id] || CFG.items[id].sellPrice == null) return;', 'tr.dataset.bs259 = id', 'value="${R[id].max}"'],
+    },
+    {
+      name: '批次賣出確認視窗：每種一列、每列有「−」與數量（預設全數），按「確定賣出」才照各列數量賣；數量減到 0 那列自動取消勾選（堆肥保留量靠這個）',
+      game: [
+        'const R = Object.fromEntries(ids.map(id => [id, { max: S.inv[id], q: S.inv[id], on: true }]));',
+        'const setQ = (id, q) => { const r = R[id]; r.q = Math.max(0, Math.min(r.max, Math.floor(+q || 0))); if (r.q <= 0) r.on = false; paint(id); sum(); };',
+        "const d = e.target.closest('[data-d]'); if (d){ if (!r.on){ r.on = true; } setQ(id, r.q + +d.dataset.d); return; }",
+        'if (!r.on || r.q <= 0) continue; const got = invTake(id, r.q);',
+      ],
     },
     { name: '收成放不下時跳「農產倉庫滿了」視窗', game: ['農產倉庫滿了'] },
     { name: '倉庫視窗的標題是「倉庫」', game: ["openModal('倉庫'", "title === '倉庫'"] },

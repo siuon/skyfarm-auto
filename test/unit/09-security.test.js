@@ -148,7 +148,10 @@ test('釘住的使用者決定：預設值', () => {
   assert.equal(C.weedMaxStock, undefined, '雜草在倉庫裡沒有數量上限（2026-11-16 使用者要求移除）');
   assert.equal(C.sellWeedsWithCrops, true, '賣出設定的作物時，倉庫裡的雜草一併賣掉（2026-11-16 使用者要求）');
   assert.equal(C.machineMaxStock, 100);
-  assert.deepEqual([...C.loadMachineIds], ['compost_bin', 'fish_feed_machine'], '玉米餅機不在投料白名單');
+  assert.deepEqual([...C.loadMachineIds], ['fish_feed_machine'], '玉米餅機不在投料白名單；堆肥桶有自己的開關，不在這份名單裡');
+  // 2026-11-18 使用者要求：自動堆肥（堆肥桶可以有多個）、賣雜草時為堆肥保留一部分
+  assert.equal(C.autoCompost, true, '堆肥桶自動投料預設開（原料是免費的便便與雜草）');
+  assert.equal(C.compostKeepRounds, 2, '賣雜草時保留「所有堆肥桶各放滿 2 輪」的雜草');
   assert.equal(C.waterBelow, 1);
   assert.equal(C.waterUpTo, null);
 });

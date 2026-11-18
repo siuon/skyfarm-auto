@@ -17,7 +17,7 @@ const SCRIPT_PATH = path.join(__dirname, '..', '..', 'skyfarm-auto.js');
 
 // 要匯出的內部名稱。名稱在腳本裡不存在的話，載入時會丟 ReferenceError，測試立刻失敗。
 const FUNCS = [
-  'game', 'storageInfo', 'isModalOpen', 'modalTitle', 'isRipe', 'hostOf', 'treeReady', 'poolState', 'machineState',
+  'game', 'storageInfo', 'isModalOpen', 'modalTitle', 'isRipe', 'hostOf', 'treeReady', 'poolState', 'machineState', 'machineCap', 'loadWanted', 'weedReserve', 'adjustWeedQty',
   'isAdultAnimal', 'animalHungry', 'animalFeedNeed', 'targetStock', 'fmtSec', 'isSellTarget', 'isSellWeed', 'unlockLevel', 'islandsInfo', 'islandPlan', 'toggleIslandMode',
   'coerceSetting', 'crossCheck', 'loadSettings', 'applySetting', 'resetSetting', 'resetAllSettings', 'fmtSetting',
   'openSettingsPanel', 'closeSettingsPanel', 'toggleSettingsPanel', 'syncSettingsPanel',
@@ -31,7 +31,7 @@ const CONSTS = ['CONFIG', 'VERSION', 'NAME', 'BADGE_ID', 'PANEL_ID', 'cooldown',
 const STATE = [
   ['enabled', false], ['status', false], ['note', false], ['stats', false], ['badge', false], ['collapsed', true], ['panel', false], ['settingsPanel', false], ['hotkeyCapture', false], ['gearBtn', false],
   ['homeIsland', false], ['expectedCur', false], ['holdUntil', true], ['islandHint', false], ['islandLine', false],
-  ['targetCrop', true], ['needSell', true], ['sellBlockedUntil', true], ['lastActionAt', true], ['timer', false],
+  ['targetCrop', true], ['needSell', true], ['sellBlockedUntil', true], ['weedSellOffUntil', true], ['lastActionAt', true], ['timer', false],
 ];
 
 function shimCode() {

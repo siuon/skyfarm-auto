@@ -162,6 +162,18 @@ test('設定 machines 與 machineUpgrade：投入／產出、升級規則', () =
   for (const id of ['compost_bin', 'fish_feed_machine', 'corn_cake_machine']) assert.ok(CFG.machines[id], '機器要存在：' + id);
 });
 
+test('設定 compost_bin：原料是便便與雜草（雜草每批數量用來算「賣雜草時要留多少」）、產出有機肥、可升級、成品手動收', () => {
+  const D = CFG.machines.compost_bin;
+  assert.deepEqual(Object.keys(D.input).sort(), ['poop', 'weed'], '堆肥桶的原料只有便便與雜草（都是免費的）');
+  assert.ok(isNum(D.input.weed) && D.input.weed > 0, '腳本用 machines.compost_bin.input.weed 算每批要幾株雜草');
+  assert.ok(isNum(D.input.poop) && D.input.poop > 0);
+  assert.deepEqual(Object.keys(D.output), ['organic_fert']);
+  assert.equal(D.collect, 'manual', '成品要手動收（腳本的 autoCollectMachines）');
+  assert.ok(CFG.machineUpgrade.appliesTo.includes('compost_bin'), '堆肥桶可以升級：一次放幾批看等級（腳本照遊戲公式算）');
+  assert.ok(isNum(CFG.machineUpgrade.maxLevel) && isNum(CFG.machineUpgrade.batchesPerLevel));
+  assert.equal(CFG.items.poop.sellPrice, 0, '便便賣價 0：腳本本來就不賣便便，所以不需要保留量');
+});
+
 test('設定：糞便與雜草的物品代號、捉蟲的選項與次數', () => {
   assert.equal(CFG.weeds.item, 'weed', '腳本直接用 S.inv.weed 算雜草庫存');
   assert.ok(CFG.items.poop && CFG.items.weed);

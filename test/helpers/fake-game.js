@@ -260,7 +260,11 @@ function attachWorld(env, o = {}) {
     const buttons = [
       ['button[data-m61="load"]', mkBtn('m61', 'load', () => {
         for (const [id, q] of Object.entries(D.input)) take(id, q * canN);
-        T.run = true; T.state = 'working';
+        // 和官方 loadMachine61 一樣：沒在做就先開第一批，其餘的排隊（T.q）；一次投到放滿或材料用完
+        let left = canN;
+        if (!T.run) { T.run = true; left -= 1; }
+        T.q = (T.q || 0) + left;
+        T.state = 'working';
         T.loaded = (T.loaded || 0) + canN;
       }, canN <= 0)],
       ['button[data-m61="collect"]', mkBtn('m61', 'collect', () => {
@@ -507,6 +511,10 @@ function attachWorld(env, o = {}) {
     selected: new Set(), confirmMissing: !!o.confirmMissing, noRows: !!o.noRows, opens: 0, sold: [],
     preselect: o.preselect || [], // 玩家之前留下的勾選
     noGoButton: !!o.noGoButton, noOpen: !!o.noOpen, purchaseYes: null,
+    // 賣出確認視窗的故障情境（測試「賣出前逐列回讀驗證、對不上就取消」用）
+    noQtyRows: !!o.noQtyRows, // 視窗沒有逐列數量（找不到 .r259）
+    minusBroken: !!o.minusBroken, // 按「−」沒反應（數量調不下去）
+    extraRows: o.extraRows || [], // 視窗多出我們沒勾的物品列
   };
   world.storageUI = ui;
   const tabProduce = new FakeEl(doc, 'button');
@@ -524,12 +532,52 @@ function attachWorld(env, o = {}) {
     const ask = doc.register('ask47', new FakeEl(doc, 'div'));
     const yes = new FakeEl(doc, 'button');
     const no = new FakeEl(doc, 'button');
+    // 官方 openBatch259 的逐列數量：每種一列，預設全數；「−」減一、減到 0 那列自動取消勾選；按「確定賣出」才照各列數量賣
+    const dRows = [];
+    const addRow = (id) => {
+      const R = { id, q: S.inv[id] || 0, on: true };
+      const row = new FakeEl(doc, 'div');
+      row.dataset.id = id;
+      const minus = new FakeEl(doc, 'button');
+      minus.dataset.d = '-1';
+      const qty = new FakeEl(doc, 'input');
+      qty.value = String(R.q);
+      const box = new FakeEl(doc, 'input');
+      box.checked = true;
+      minus.onclick = () => {
+        if (ui.minusBroken) return;
+        R.q = Math.max(0, R.q - 1);
+        if (R.q <= 0) { R.on = false; box.checked = false; }
+        qty.value = String(R.q);
+      };
+      row.q1('button[data-d="-1"]', minus);
+      row.q1('input[type=number]', qty);
+      row.q1('input.rc259', box);
+      R.row = row;
+      dRows.push(R);
+    };
+    if (!ui.noQtyRows) {
+      for (const id of ui.selected) addRow(id);
+      for (const id of ui.extraRows) addRow(id);
+      doc.q('#ask47 .bs259 .r259', dRows.map((r) => r.row));
+    }
     yes.onclick = () => {
-      for (const id of ui.selected) {
-        const n = S.inv[id] || 0;
-        ui.sold.push([id, n]);
-        S.player.coins += n * (CFG.items[id].sellPrice || 0);
-        delete S.inv[id];
+      if (dRows.length) {
+        for (const R of dRows) {
+          if (!R.on || R.q <= 0) continue;
+          const n = Math.min(R.q, S.inv[R.id] || 0);
+          ui.sold.push([R.id, n]);
+          S.player.coins += n * (CFG.items[R.id].sellPrice || 0);
+          S.inv[R.id] = (S.inv[R.id] || 0) - n;
+          if (S.inv[R.id] <= 0) delete S.inv[R.id];
+        }
+      } else {
+        for (const id of ui.selected) {
+          const n = S.inv[id] || 0;
+          ui.sold.push([id, n]);
+          S.player.coins += n * (CFG.items[id].sellPrice || 0);
+          delete S.inv[id];
+        }
       }
       ui.selected.clear();
       refreshBar();
@@ -540,6 +588,7 @@ function attachWorld(env, o = {}) {
     const closeAsk = () => {
       doc.byId.delete('ask47');
       for (const sel of ['#ask47 .bs259 #ask47y', '#ask47 .bs259 #ask47c', '#ask47y']) doc.q1(sel, null);
+      doc.q('#ask47 .bs259 .r259', []);
     };
     doc.q1('#ask47y', yes); // 購買確認視窗也有同樣的 #ask47y
     if (!ui.confirmMissing) {

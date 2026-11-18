@@ -156,14 +156,35 @@ test('機器：倉庫放不下成品就不收（不跳「倉庫滿了」）；au
   assert.equal(ctx.world.acts.length, 0);
 });
 
-test('機器投料：預設關閉——材料再多、機器再空都不動', async () => {
-  const ctx = boot({ tiles: { '5,2': machine('compost_bin'), '6,2': machine('fish_feed_machine'), '7,2': machine('corn_cake_machine') }, inv: { poop: 99, weed: 99, wheat: 99, corn: 99 } });
+test('機器投料：預設只有堆肥桶會投（autoCompost 預設開、原料免費）；魚飼料機、玉米餅機要開 autoLoadMachines——材料再多都不動', async () => {
+  const ctx = boot({ tiles: { '5,2': machine('compost_bin'), '6,2': machine('fish_feed_machine'), '7,2': machine('corn_cake_machine') }, inv: { poop: 99, weed: 99, wheat: 99, corn: 99 }, cap: 5000 });
   await run(ctx, 5);
-  assert.equal(ctx.world.acts.length, 0);
-  assert.equal(ctx.world.S.inv.corn, 99);
+  assert.equal(ctx.world.S.inv.poop, 95, '堆肥桶（等級 1）放了 1 批：糞便 4、雜草 2');
+  assert.equal(ctx.world.S.inv.weed, 97);
+  assert.equal(ctx.world.S.inv.wheat, 99, '魚飼料機的原料不碰');
+  assert.equal(ctx.world.S.inv.corn, 99, '玉米餅機不碰');
+  assert.equal(ctx.world.M.tiles['6,2'].state, 'idle');
+  assert.equal(ctx.world.M.tiles['7,2'].state, 'idle');
 });
 
-test('機器投料：開啟後只投白名單內的機器（堆肥桶、魚飼料機）；玉米餅機不在內', async () => {
+test('機器投料：堆肥桶只看 autoCompost——關掉就不投，即使 autoLoadMachines 開著、白名單裡也沒有它', async () => {
+  const tiles = { '5,2': machine('compost_bin'), '6,2': machine('fish_feed_machine') };
+  const inv = { poop: 99, weed: 99, wheat: 99 };
+  const cap = 5000; // 倉庫夠大，不會因為快滿而先去賣東西
+  let ctx = boot({ tiles, cap, inv: { ...inv } }, { flags: { autoCompost: false } });
+  await run(ctx, 5);
+  assert.equal(ctx.world.acts.length, 0, '兩個開關都沒開：什麼都不投');
+  ctx = boot({ tiles, cap, inv: { ...inv } }, { flags: { autoCompost: false, autoLoadMachines: true } });
+  await run(ctx, 6);
+  assert.equal(ctx.world.S.inv.poop, 99, 'autoCompost 關著：堆肥桶不投');
+  assert.equal(ctx.world.S.inv.wheat, 98, '魚飼料機照 autoLoadMachines 投了 1 批（每批小麥 1 個，等級 1 一次一批）');
+  ctx = boot({ tiles, cap, inv: { ...inv } }, { flags: { autoCompost: true } });
+  await run(ctx, 5);
+  assert.equal(ctx.world.S.inv.poop, 95, '只開 autoCompost：堆肥桶投了');
+  assert.equal(ctx.world.S.inv.wheat, 99, 'autoLoadMachines 關著：魚飼料機不投');
+});
+
+test('機器投料：開啟 autoLoadMachines 後只投白名單內的機器（魚飼料機，加上堆肥桶）；玉米餅機不在內', async () => {
   const ctx = boot({ tiles: { '5,2': machine('compost_bin'), '6,2': machine('fish_feed_machine'), '7,2': machine('corn_cake_machine') }, inv: { poop: 8, weed: 4, wheat: 5, corn: 9 } }, { flags: { autoLoadMachines: true } });
   await run(ctx, 6);
   assert.equal(ctx.world.S.inv.poop, 4, '堆肥桶放了 1 批（糞便 4、雜草 2）');
@@ -176,7 +197,7 @@ test('機器投料：開啟後只投白名單內的機器（堆肥桶、魚飼�
 
 test('機器投料：材料不夠、成品庫存已達上限、已經在做（等級 1）、有成品還沒收 → 都不投', async () => {
   const base = { poop: 4, weed: 2 };
-  const flags = { autoLoadMachines: true };
+  const flags = {}; // 堆肥桶看 autoCompost（預設開）
   let ctx = boot({ tiles: { '5,2': machine('compost_bin') }, inv: { poop: 3, weed: 2 } }, { flags });
   await run(ctx, 4);
   assert.equal(ctx.world.acts.length, 0, '糞便 3 < 4');

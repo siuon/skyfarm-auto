@@ -3,7 +3,7 @@
  *
  * 由 Tampermonkey 透過 @require 載入（設定見 skyfarm-auto.loader.user.js）。
  *
- * 功能（0.17.0）：
+ * 功能（0.18.0）：
  *   - Alt+Shift+S：跳出輸入框，輸入「這次要自動種植的作物」（中文名稱或代號皆可）
  *   - Alt+Shift+A：開啟／關閉自動功能（每次載入頁面一律預設 OFF，不會記住 ON）；
  *                  還沒設定作物就按開啟時，會先跳出輸入框，確認後才開始
@@ -55,9 +55,14 @@
  *          所以腳本保持庫存：庫存低於「隻數 × petFoodLowPerPet」或有寵物餓著，就開倉庫 → 飼料商店 → 買 10 份
  *          （補到每隻 petFoodTargetPerPet 份，一次最多買 5 次；會花金幣，買完要剩 minCoinsAfterBuyPetFood 以上、倉庫放得下）。
  *          遊戲先跳「確定要買嗎？」，核對標題、價格、金幣才按「確定購買」，絕不勾「以後不再詢問」。
+ *      12. 堆肥桶（CONFIG.autoCompost，預設開，可以有很多個、每座島都行）：桶有空位、倉庫的便便（4）與雜草（2）夠一批就投料，
+ *          一次投到放滿（Lv5 一桶 5 批）；做好的有機肥由 autoCollectMachines 收。便便和雜草都是免費原料，不花金幣。
+ *          堆肥桶只看 autoCompost，和下面的 autoLoadMachines 無關。有機肥在倉庫的庫存到 machineMaxStock 就先不投
+ *          （腳本不施肥也不賣有機肥）。賣出時雜草會保留一部分給堆肥桶（CONFIG.compostKeepRounds，見「倉庫賣出」）；
+ *          便便本來就不賣（賣價 0）。
  *       以下三項會用到你的資源，預設關閉，要用請改 CONFIG：
  *          autoWaterTrees（果樹也澆雨水）、autoFeedFish（用倉庫現有的飼料餵魚，不會自動買）、
- *          autoLoadMachines（機器自動投料，只投 loadMachineIds 裡的機器，成品庫存有上限）
+ *          autoLoadMachines（其他機器自動投料，只投 loadMachineIds 裡的機器，成品庫存有上限；不含堆肥桶）
  *       其他種類的作物預設只收成、不澆水（CONFIG.handleOtherCrops 開了才也澆水）
  *
  * 資料來源（不需要辨識 canvas 畫面）：
@@ -68,6 +73,9 @@
  *   即遊戲畫面上顯示成熟圖示的條件。
  *   倉庫賣出：用遊戲自己的 DOM 操作（#storageBtn 開倉庫 → 勾選列 input.cb259 →
  *   #bsbar259 的「賣出所選」→ #ask47y「確定賣出」→ #modalClose 關閉）。
+ *   要保留雜草給堆肥桶時，確認視窗裡雜草那一列（.r259[data-id="weed"]）用它的「−」把數量減到「庫存 − 保留量」，
+ *   按「確定賣出」前逐列回讀數量（雜草＝庫存 − 保留量、其他列＝全數），對不上就按取消、雜草這次不賣。
+ *   不用視窗上方的全域「保留 N」（它會套到所有勾選的列，連設定作物都會留下）。
  *
  * 資安原則：
  *   - 不使用 GM_* 權限（@grant none），不對外發送任何網路請求。
@@ -87,7 +95,7 @@
   'use strict';
 
   const NAME = 'SkyFarmAuto';
-  const VERSION = '0.17.0';
+  const VERSION = '0.18.0';
   const BADGE_ID = 'skyfarm-auto-badge';
   const PANEL_ID = 'skyfarm-auto-panel';
   const SETTINGS_PANEL_ID = 'skyfarm-auto-settings-panel';
@@ -125,9 +133,11 @@
     autoCollectMachines: true, // 機器做好的成品自動收進倉庫（倉庫放得下才收）
     autoWaterTrees: false, // 果樹也澆水（用雨水，會和作物搶水；預設關閉）
     autoFeedFish: false, // 魚餓了就餵（只用倉庫現有的飼料，不夠就不餵、不自動買；預設關閉）
-    autoLoadMachines: false, // 機器空了自動投料（會消耗倉庫的材料；預設關閉）
-    loadMachineIds: ['compost_bin', 'fish_feed_machine'], // 開啟投料時，只對這些機器投（玉米餅機會把很值錢的玉米變成便宜的飼料，所以不在內）
-    machineMaxStock: 100, // 投料前，成品在倉庫的庫存已經 ≥ 此值就不再投（避免成品把倉庫塞滿）
+    autoCompost: true, // 堆肥桶有空位、倉庫的便便與雜草夠一批就自動投料（原料是免費的；和 autoLoadMachines 無關）
+    compostKeepRounds: 2, // 賣雜草時，保留「把所有堆肥桶各放滿這麼多輪」要用的雜草（每批 2 株；Lv5 一桶放滿一輪 10 株）；0＝不保留。便便不會被賣
+    autoLoadMachines: false, // 其他機器（不含堆肥桶）空了自動投料（會消耗倉庫的材料；預設關閉）
+    loadMachineIds: ['fish_feed_machine'], // 開啟 autoLoadMachines 時，只對這些機器投（玉米餅機會把很值錢的玉米變成便宜的飼料，所以不在內；堆肥桶看 autoCompost）
+    machineMaxStock: 100, // 投料前，成品在倉庫的庫存已經 ≥ 此值就不再投（避免成品把倉庫塞滿；有機肥也一樣，腳本不施肥、不賣有機肥）
     autoCatchPests: true, // 作物、果樹長蟲時，用「照顧」工具的「捉蟲」（免費）點到抓光；不噴農藥、不施肥
     catchPestsOnOtherCrops: true, // 其他種類作物與果樹長蟲也抓（蟲會往旁邊擴散；抓蟲免費，不影響收成與庫存）
     autoWater: true, // 還在長的作物（含枯萎的）自動澆水；只用雨水，雨水不夠就暫停
@@ -213,6 +223,7 @@
   let lastActionAt = 0; // 上一次真的做成一件事（收成、播種、賣出…）的時間，顯示在右下角方便看出有沒有停住
   let needSell = false; // 曾被「倉庫滿了」視窗擋住，或金幣不夠買種子，下個週期優先賣出
   let sellBlockedUntil = 0; // 賣不出東西時的暫停時間
+  let weedSellOffUntil = 0; // 賣出確認視窗裡沒辦法把雜草數量調到「留下保留量」時，這段時間內賣出就不帶雜草（設定作物照賣）
   const cooldown = new Map(); // 格子座標 → { kind, until, fails }，避免對同一格狂點
   const partsBlocked = new Map(); // 充電樁種類 → 換耗材沒成功時，暫停到什麼時候再試
   const partsWhy = new Map(); // 充電樁種類 → 還沒換成的原因（寫在右下角標籤上）
@@ -326,6 +337,34 @@
   }
 
   // 機器：成品數（可能「還在做」同時已有做好的成品）、能不能再投一批料
+  // 機器一次最多放幾批：和遊戲一樣，Lv1 一批、每升一級多 batchesPerLevel 批；沒有升級功能的機器一批
+  function machineCap(T, CFG) {
+    const MU = CFG.machineUpgrade || {};
+    if (!(MU.appliesTo || []).includes(T.id)) return 1;
+    const lvl = Math.max(1, Math.min(MU.maxLevel || 5, T.lvl || 1));
+    return 1 + (lvl - 1) * (MU.batchesPerLevel || 1);
+  }
+
+  // 這種機器要不要自動投料：堆肥桶只看 autoCompost；其他機器看 autoLoadMachines 加上白名單
+  const loadWanted = (id) =>
+    id === 'compost_bin' ? !!CONFIG.autoCompost : !!CONFIG.autoLoadMachines && CONFIG.loadMachineIds.includes(id);
+
+  // 賣雜草時要留給堆肥桶的數量：每座島所有堆肥桶各放滿 compostKeepRounds 輪需要的雜草（沒有堆肥桶、沒開堆肥、設 0 都是不保留）
+  function weedReserve(g) {
+    if (!CONFIG.autoCompost || !(CONFIG.compostKeepRounds > 0)) return 0;
+    const D = g.CFG.machines && g.CFG.machines.compost_bin;
+    const per = D && D.input ? Number(D.input.weed) : 0;
+    if (!(per > 0) || !Array.isArray(g.S.maps)) return 0;
+    let batches = 0;
+    for (const M of g.S.maps) {
+      for (const k in M.tiles) {
+        const T = M.tiles[k];
+        if (T && T.t === 'machine' && T.id === 'compost_bin') batches += machineCap(T, g.CFG);
+      }
+    }
+    return Math.ceil(batches * per * CONFIG.compostKeepRounds);
+  }
+
   function machineState(T, g) {
     const { S, CFG } = g;
     const D = CFG.machines && CFG.machines[T.id];
@@ -334,8 +373,7 @@
     const up = (MU.appliesTo || []).includes(T.id);
     const out = T.out > 0 ? T.out : T.state === 'done' ? 1 : 0;
     const outQty = out * Object.values(D.output).reduce((a, b) => a + b, 0);
-    const lvl = Math.max(1, Math.min(MU.maxLevel || 5, T.lvl || 1));
-    const cap = up ? 1 + (lvl - 1) * (MU.batchesPerLevel || 1) : 1;
+    const cap = machineCap(T, CFG);
     let used = up ? (T.run ? 1 : 0) + (T.q || 0) + (T.out || 0) : T.state === 'idle' ? 0 : 1;
     if (T.state === 'working') used = Math.max(used, 1);
     const inputsOk = Object.entries(D.input).every(([id, q]) => (S.inv[id] || 0) >= q);
@@ -428,13 +466,44 @@
     }
   }
 
+  // 賣出確認視窗（#ask47 .bs259）裡，把雜草那一列的數量調成 want，並逐列回讀驗證：
+  // 雜草列＝want、其他每一列＝倉庫庫存（全數），而且每一列都是勾選的、都是我們勾的物品。任何一處對不上就回報失敗（呼叫端會取消）。
+  // 只用那一列自己的「−」按鈕，不碰視窗上方的全域「保留 N」（它會套到所有勾選的列，連設定作物都會留下）。
+  function adjustWeedQty(g, want) {
+    const rows = [...document.querySelectorAll('#ask47 .bs259 .r259')];
+    const weedRow = rows.find((r) => r.dataset && r.dataset.id === 'weed');
+    const minus = weedRow && weedRow.querySelector('button[data-d="-1"]');
+    const qty = weedRow && weedRow.querySelector('input[type=number]');
+    if (!weedRow || !minus || !qty) return { ok: false, why: '賣出確認視窗裡找不到雜草的數量欄' };
+    let guard = 0;
+    while (Number(qty.value) > want && guard < 5000) {
+      minus.click();
+      guard += 1;
+    }
+    for (const r of rows) {
+      const id = r.dataset && r.dataset.id;
+      const input = r.querySelector('input[type=number]');
+      const box = r.querySelector('input.rc259');
+      const expect = id === 'weed' ? want : (g.S.inv && g.S.inv[id]) || 0;
+      if (id !== 'weed' && !isSellTarget(id)) return { ok: false, why: '賣出確認視窗裡有預期以外的物品：' + id };
+      if (!input || Number(input.value) !== expect || !box || !box.checked) {
+        return { ok: false, why: '賣出確認視窗的數量和預期不一致（' + id + '）' };
+      }
+    }
+    return { ok: true };
+  }
+
   // 倉庫：開啟 → 勾選要賣的物品 → 「賣出所選」→「確定賣出」→ 關閉。
   // 這是遊戲目前的批次賣出介面（每列有勾選框，下方出現結帳列，確認視窗預設全數賣出）。
+  // 雜草只賣超過「堆肥保留量」（weedReserve）的部分：庫存沒超過就不勾；超過就在確認視窗裡把雜草數量調成「庫存 − 保留量」。
   // 無論中途如何結束，只要是我們開的視窗就一定關掉。
   async function sellFlow(g) {
     let opened = false;
     let result = '';
     const before = storageInfo(g).used;
+    const weedStock = (g.S.inv && g.S.inv.weed) || 0;
+    const weedKeep = weedReserve(g);
+    const sellWeeds = Date.now() >= weedSellOffUntil && weedStock > weedKeep;
     try {
       const btn = $('storageBtn');
       if (!btn) return;
@@ -458,7 +527,7 @@
       if (clear) clear.click();
       let picked = 0;
       for (const tr of document.querySelectorAll('#modalBody tr[data-bs259]')) {
-        if (!isSellTarget(tr.dataset.bs259) && !isSellWeed(tr.dataset.bs259)) continue;
+        if (!isSellTarget(tr.dataset.bs259) && !(sellWeeds && isSellWeed(tr.dataset.bs259))) continue;
         const cb = tr.querySelector('input.cb259');
         if (!cb) continue;
         if (!cb.checked) cb.click();
@@ -481,7 +550,16 @@
         result = '確認視窗異常';
         return;
       }
-      ok.click(); // 確認視窗預設就是每項全數賣出
+      // 要留雜草給堆肥桶：先把雜草數量調成「庫存 − 保留量」並回讀驗證；失敗就不賣（finally 會按取消），之後一段時間賣出不帶雜草
+      if (weedKeep > 0 && sellWeeds && isSellWeed('weed')) {
+        const adj = adjustWeedQty(g, weedStock - weedKeep);
+        if (!adj.ok) {
+          result = adj.why + '，這次不賣；之後 10 分鐘賣出不帶雜草';
+          weedSellOffUntil = Date.now() + 600000;
+          return;
+        }
+      }
+      ok.click(); // 確認視窗預設是每項全數賣出（雜草的保留量上面已經調好）
       await sleep(400);
     } finally {
       // 收尾：確認視窗若還在就取消；倉庫視窗是我們開的就關掉
@@ -1133,7 +1211,7 @@
           } else {
             blockedPick = true;
           }
-        } else if (CONFIG.autoLoadMachines && CONFIG.loadMachineIds.includes(T.id) && ms.canLoad) {
+        } else if (loadWanted(T.id) && ms.canLoad) {
           loads.push([k, 'mload']);
         }
         continue;
@@ -1489,10 +1567,7 @@
         const ms = T0 && T0.t === 'machine' ? machineState(T0, g) : null;
         if (!ms) continue;
         if (kind === 'mcollect' && !(ms.out > 0)) continue;
-        if (
-          kind === 'mload' &&
-          !(CONFIG.autoLoadMachines && CONFIG.loadMachineIds.includes(T0.id) && ms.out === 0 && ms.canLoad)
-        ) {
+        if (kind === 'mload' && !(loadWanted(T0.id) && ms.out === 0 && ms.canLoad)) {
           continue;
         }
         before.machineOut = ms.out;
@@ -2580,9 +2655,11 @@
       bool('autoFeedFish', '餵魚', '魚餓了就餵，只用倉庫現有的飼料，不夠就不餵、不自動買（預設關閉）。'),
       bool('autoCollectHoney', '收蜂蜜', '蜂箱裡存的蜂蜜自動收進倉庫（倉庫放得下才收；只點有蜂蜜的蜂箱）。'),
       bool('autoCollectMachines', '收機器成品', '機器做好的成品自動收進倉庫（倉庫放得下才收）。'),
-      bool('autoLoadMachines', '機器自動投料', '機器空了自動投料，會消耗倉庫的材料（預設關閉）。只對下一項勾選的機器投。'),
-      { key: 'loadMachineIds', type: 'machines', label: '要自動投料的機器', desc: '只有勾選的機器才會被自動投料。玉米餅機會把很值錢的玉米變成便宜的飼料，所以預設沒勾。' },
-      num('machineMaxStock', '成品庫存上限', '投料前，這種成品在倉庫的庫存已經 ≥ 這個數就不再投，避免成品把倉庫塞滿。', 0, 10000, '個'),
+      bool('autoCompost', '堆肥桶自動投料', '堆肥桶有空位、倉庫的便便（每批 4）與雜草（每批 2）夠一批就自動投料，一次投到放滿；可以有很多個堆肥桶、每座島都行。原料是免費的，做好的有機肥由上面的「收機器成品」收。和下面的「機器自動投料」無關。'),
+      num('compostKeepRounds', '賣雜草時為堆肥保留幾輪', '倉庫賣雜草時，留下「把所有堆肥桶各放滿這麼多輪」要用的雜草（每批 2 株；一台 Lv5 堆肥桶放滿一輪要 10 株、三台就是 30 株）。0＝不保留、雜草全賣。便便本來就不賣（賣價 0），不需要保留。沒開堆肥或沒有堆肥桶時不保留。', 0, 10, '輪'),
+      bool('autoLoadMachines', '其他機器自動投料', '其他機器空了自動投料，會消耗倉庫的材料（預設關閉）。只對下一項勾選的機器投；堆肥桶不在這裡，看上面的「堆肥桶自動投料」。'),
+      { key: 'loadMachineIds', type: 'machines', label: '要自動投料的機器', desc: '只有勾選的機器才會被自動投料（堆肥桶另有開關，不在這裡）。玉米餅機會把很值錢的玉米變成便宜的飼料，所以預設沒勾。' },
+      num('machineMaxStock', '成品庫存上限', '投料前，這種成品在倉庫的庫存已經 ≥ 這個數就不再投，避免成品把倉庫塞滿。有機肥也一樣：腳本不施肥、也不賣有機肥，庫存到這個數堆肥桶就先停。', 0, 10000, '個'),
     ]],
     ['地上雜物', [
       bool('autoStraighten', '扶正歪掉的裝飾', '被風吹歪的裝飾、倒下的柵欄自動扶正（免費、不佔倉庫）。'),
@@ -3028,6 +3105,7 @@
       Object.assign(list.style, { width: '100%', display: 'flex', flexWrap: 'wrap', gap: '4px 12px' });
       for (const id of ids) {
         if (!/^[a-z0-9_]{1,40}$/.test(id)) continue;
+        if (id === 'compost_bin') continue; // 堆肥桶有自己的開關（autoCompost），不在這份名單裡
         const lab = document.createElement('label');
         const cb = document.createElement('input');
         cb.type = 'checkbox';

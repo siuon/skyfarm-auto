@@ -138,7 +138,7 @@ test('載入：不合的整項忽略（型別錯、超出範圍、未知參數�
   assert.equal(C.maxActionsPerTick, 3);
   assert.equal(C.islandMode, 'all');
   assert.deepEqual([...C.skipIslands], []);
-  assert.deepEqual([...C.loadMachineIds], ['compost_bin', 'fish_feed_machine']);
+  assert.deepEqual([...C.loadMachineIds], ['fish_feed_machine']);
   assert.equal(C.autoWater, false, '合法的照套');
   assert.equal(C.minCoinsAfterPlant, 50);
   assert.equal(C.notAKey, undefined, '未知參數不會被加進 CONFIG');
@@ -295,7 +295,10 @@ test('視窗裡的控制項反映目前的設定：勾選框、數字、選單�
   assert.equal(row(ctx, 'waterUpTo').input.value, '', 'null 顯示成空白');
   assert.equal(row(ctx, 'islandMode').input.value, 'current');
   assert.equal(row(ctx, 'skipIslands').input.value, '2, 3');
-  assert.equal(row(ctx, 'loadMachineIds').boxes.get('compost_bin').checked, true);
+  assert.equal(row(ctx, 'loadMachineIds').boxes.get('fish_feed_machine').checked, true);
+  assert.equal(row(ctx, 'loadMachineIds').boxes.get('compost_bin'), undefined, '堆肥桶有自己的開關（autoCompost），不在機器名單裡');
+  assert.equal(row(ctx, 'autoCompost').input.checked, true, '堆肥桶自動投料預設開');
+  assert.equal(row(ctx, 'compostKeepRounds').input.value, '2');
   assert.equal(row(ctx, 'loadMachineIds').boxes.get('corn_cake_machine').checked, false, '遊戲裡有的機器也列出來，預設沒勾');
   assert.equal(row(ctx, 'autoSell').mark.textContent, '已改過');
   assert.equal(row(ctx, 'autoPlant').mark.textContent, '');
@@ -319,10 +322,10 @@ test('在視窗改設定：勾選框、數字、選單、島編號、機器勾�
   const mach = row(ctx, 'loadMachineIds');
   mach.boxes.get('corn_cake_machine').checked = true;
   mach.boxes.get('corn_cake_machine').dispatch('change');
-  assert.deepEqual([...ctx.t.CONFIG.loadMachineIds].sort(), ['compost_bin', 'corn_cake_machine', 'fish_feed_machine']);
+  assert.deepEqual([...ctx.t.CONFIG.loadMachineIds].sort(), ['corn_cake_machine', 'fish_feed_machine']);
   assert.deepEqual(stored(storage), {
     autoSell: false, tickMs: 900, islandMode: 'current', skipIslands: [2, 3],
-    loadMachineIds: ['compost_bin', 'fish_feed_machine', 'corn_cake_machine'],
+    loadMachineIds: ['fish_feed_machine', 'corn_cake_machine'],
   });
   assert.equal(row(ctx, 'tickMs').mark.textContent, '已改過');
 });
@@ -408,7 +411,8 @@ test('設定視窗開著時腳本照常工作（不暫停）；沒載入遊戲�
   const e = load();
   e.key('KeyG');
   assert.ok(e.t.settingsPanel, '遊戲還沒載入也開得起來');
-  assert.ok(e.t.settingsRows.get('loadMachineIds').boxes.get('compost_bin'));
+  assert.ok(e.t.settingsRows.get('loadMachineIds').boxes.get('fish_feed_machine'));
+  assert.equal(e.t.settingsRows.get('loadMachineIds').boxes.get('compost_bin'), undefined, '堆肥桶不在這份名單裡');
 });
 
 test('視窗內容一律用 textContent 寫入：說明文字裡的角括號不會被當成 HTML', () => {
