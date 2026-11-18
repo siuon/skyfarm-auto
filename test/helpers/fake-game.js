@@ -120,6 +120,65 @@ function attachWorld(env, o = {}) {
     trayItem[id] = b;
   };
   for (const id of Object.keys(CFG.crops)) addTray(id, () => { S.sel.seed = id; });
+
+  // ───── 種子列的分頁與作物分類（官方 2.68.1：#trayTabs 設施／作物／果樹／花苗／蝴蝶園，「作物」分頁裡再分類 #cgrp62）─────
+  // 所有作物項目一直在畫面結構裡，沒顯示的只是 hidden（和遊戲一樣：點看不見的項目照樣選得到，但分頁、分類不會跟著切）。
+  // 花苗分頁整個換掉品項列（沒有作物項目）。測試用 o.seedTray 開啟；沒開時維持舊行為（所有作物項目都看得見、沒有分頁）。
+  const GROUPS = (CFG.ui && CFG.ui.cropGroups && CFG.ui.cropGroups.groups) || [];
+  const groupOf = (id) => (GROUPS.find((g) => g.ids.includes(id)) || { id: 'other' }).id;
+  const curGroup = () => (!S.sel.none49 && CFG.crops[S.sel.seed] ? groupOf(S.sel.seed) : (S.sel.cropGrp62 || (GROUPS[0] || {}).id));
+  const tabBtn = {};
+  const grpBtn = {};
+  world.seedTabClicks = []; world.groupClicks = []; world.facilityActs = []; world.bfActs = [];
+  function rebuildSeedTray() {
+    if (!o.seedTray) return;
+    const tab = S.sel.seedTab || 'crops', g = curGroup();
+    for (const id of Object.keys(CFG.crops)) {
+      const el = trayItem[id];
+      el.hidden = !(tab === 'crops' && groupOf(id) === g);
+      // 花苗分頁：品項列整個換成花苗，作物項目不在畫面結構裡
+      if (tab === 'flowers') doc._q1.delete('#tray .item[data-id="' + id + '"]');
+      else doc.q1('#tray .item[data-id="' + id + '"]', el);
+    }
+    for (const [k, b] of Object.entries(tabBtn)) b.classList[k === tab ? 'add' : 'remove']('on');
+    for (const [k, b] of Object.entries(grpBtn)) b.classList[k === g ? 'add' : 'remove']('on');
+  }
+  if (o.seedTray) {
+    for (const id of o.noTabBar ? [] : ['facility', 'crops', 'trees', 'flowers', 'bfgarden']) {
+      const b = new FakeEl(doc, 'button');
+      b.dataset.tab = id;
+      b.onclick = () => {
+        world.seedTabClicks.push(id);
+        if (o.tabBroken) return; // 模擬「點了沒反應」
+        S.sel.seedTab = id;
+        if (id === 'crops' && !CFG.crops[S.sel.seed]) S.sel.seed = 'wheat'; // 遊戲：回到作物分頁時，選著的不是作物就換回上次的作物
+        rebuildSeedTray();
+      };
+      doc.q1('#trayTabs button[data-tab="' + id + '"]', b);
+      tabBtn[id] = b;
+    }
+    for (const g of o.noGroupBar ? [] : GROUPS) {
+      const b = new FakeEl(doc, 'button');
+      b.dataset.cg62 = g.id;
+      b.onclick = () => {
+        world.groupClicks.push(g.id);
+        if (o.groupBroken) return;
+        if (g.id === curGroup()) return; // 遊戲：已經在那一類就什麼都不做
+        S.sel.cropGrp62 = g.id;
+        if (!(CFG.crops[S.sel.seed] && groupOf(S.sel.seed) === g.id)) S.sel.none49 = true;
+        rebuildSeedTray();
+      };
+      doc.q1('#cgrp62 button[data-cg62="' + g.id + '"]', b);
+      grpBtn[g.id] = b;
+    }
+    // 點項目之後分類會跟著選到的作物（遊戲的 curGroup62 看 S.sel.seed）；分頁不會自己切
+    for (const id of Object.keys(CFG.crops)) {
+      const prev = trayItem[id].onclick;
+      trayItem[id].onclick = (e) => { prev(e); rebuildSeedTray(); };
+    }
+    rebuildSeedTray();
+  }
+  world.rebuildSeedTray = rebuildSeedTray;
   addTray('catch', () => { S.sel.care = 'catch'; });
   addTray('org', () => { S.sel.care = 'org'; });
   addTray('chem', () => { S.sel.care = 'chem'; }); // 腳本絕不該選這兩個：點下去會記成 chemUsed
@@ -341,6 +400,8 @@ function attachWorld(env, o = {}) {
       return;
     }
     if (tool === 'hand' && T && T.t === 'device' && CFG.devices[T.id] && CFG.devices[T.id].kind === 'hive') { tapHive(T); return; }
+    if (tool === 'seed' && S.sel.seedTab === 'facility' && S.sel.seedFac) { world.facilityActs.push(k); return; }
+    if (tool === 'seed' && S.sel.seedTab === 'bfgarden') { world.bfActs.push(k); return; }
     if (tool !== 'hand' && tool !== 'seed') return;
     if (T && T.t === 'soil') {
       if (T.crop) {

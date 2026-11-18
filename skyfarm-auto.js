@@ -3,7 +3,7 @@
  *
  * 由 Tampermonkey 透過 @require 載入（設定見 skyfarm-auto.loader.user.js）。
  *
- * 功能（0.19.0）：
+ * 功能（0.19.1）：
  *   - Alt+Shift+S：跳出輸入框，輸入「這次要自動種植的作物」（中文名稱或代號皆可）
  *   - Alt+Shift+A：開啟／關閉自動功能（每次載入頁面一律預設 OFF，不會記住 ON）；
  *                  還沒設定作物就按開啟時，會先跳出輸入框，確認後才開始
@@ -18,6 +18,9 @@
  *       2. 倉庫剩餘空位 ≤ 門檻 → 開啟倉庫視窗、賣掉設定的作物（含有機版）、關閉倉庫視窗
  *       3. 成熟的設定作物 → 收成；空的田 → 種下設定的作物。
  *          有空田但金幣不夠買種子 → 直接賣掉倉庫裡設定的作物換錢，不等倉庫快滿（CONFIG.sellWhenCantPlant）
+ *          選種子像真人一樣一步一步切：播種工具 →「作物」分頁 → 作物分類（例如玉米在「穀物」）→ 點看得見的種子；
+ *          玩家停在設施、蝴蝶園、花苗、果樹分頁或別的作物分類時也會切回來，絕不去點「藏起來的」品項
+ *          （那樣種子雖然選到了，分頁卻還停在設施，點地圖會變成蓋設施）；分頁不在「作物」就不播種、不收成。
  *       4. 還在長（或已枯萎）的設定作物，濕度低於門檻 → 切到澆水工具澆到滿（只用雨水）
  *       5. 作物長蟲 → 切到「照顧」工具選「捉蟲」，每格點 3 下抓光（免費）；蟲沒抓光前該格不收成、不澆水。
  *          不噴農藥、不用化肥（會花錢，也會讓有機作物變一般作物）。其他種類作物長蟲也會抓。
@@ -100,7 +103,7 @@
   'use strict';
 
   const NAME = 'SkyFarmAuto';
-  const VERSION = '0.19.0';
+  const VERSION = '0.19.1';
   const BADGE_ID = 'skyfarm-auto-badge';
   const PANEL_ID = 'skyfarm-auto-panel';
   const SETTINGS_PANEL_ID = 'skyfarm-auto-settings-panel';
@@ -997,7 +1000,19 @@
   // 播種必須用「播種」工具（seed）；「收成」工具點空田只會顯示提示、不會播種。
   // 遊戲還有一道防誤觸：切到播種工具後，必須先在下方種子列點選一個種子（S.sel.none49），
   // 否則點空田會被擋下並跳出「先從下面選一個」。所以這裡會：
-  //   1. 切到播種工具  2. 點一下種子列裡設定的作物
+  //   1. 切到播種工具  2.「作物」分頁  3. 作物分類（例如玉米在「穀物」）  4. 點一下種子列裡設定的作物
+  //
+  // 種子列的結構（官方 2.68.1）：上方分頁 #trayTabs（設施／作物／果樹／花苗／蝴蝶園）；「作物」分頁裡再分 9 類 #cgrp62
+  // （穀物、豆類…）；下方 #tray 裡每個品項是 .item[data-id]。所有分頁、分類的品項都一直在畫面結構裡，沒顯示的只是 hidden。
+  // 所以直接去點一個「看不見的」玉米是個陷阱：S.sel.seed 雖然會變成玉米，畫面上的分頁卻還停在別處——
+  // 停在「設施」「蝴蝶園」時，之後點地圖會被遊戲當成蓋設施／種寄主植物（會花錢，也種不出玉米）；停在「花苗」時品項列根本沒有作物。
+  // 所以要像真人一樣一步一步切，每個週期做一步，每一步之後都重新檢查；而且只點「看得見的」品項。
+  const seedTabOk = (sel) => !sel.seedTab || sel.seedTab === 'crops';
+  function cropGroupOf(CFG, id) {
+    const groups = (CFG.ui && CFG.ui.cropGroups && CFG.ui.cropGroups.groups) || [];
+    const hit = groups.find((x) => Array.isArray(x.ids) && x.ids.includes(id));
+    return hit ? { id: hit.id, label: hit.label || hit.id } : { id: 'other', label: '其他' }; // 遊戲把沒歸類的作物放進「其他」
+  }
   function prepareTool(g) {
     const sel = g.S.sel;
     if (!ensureToolIs(g, 'seed')) {
@@ -1005,10 +1020,33 @@
       return false;
     }
     const want = targetCrop.id;
+    // 第 2 步：分頁一定要在「作物」（果樹、花苗、設施、蝴蝶園的分頁裡，種子列放的不是作物，點地圖也不是播種）
+    if (!seedTabOk(sel)) {
+      const tab = document.querySelector('#trayTabs button[data-tab="crops"]');
+      if (!tab) {
+        setStatus('無法切到「作物」分頁（找不到分頁按鈕）');
+        return false;
+      }
+      tab.click();
+      setStatus('切換工具中（播種 → 作物分頁）…');
+      return false;
+    }
     if (sel.none49 || sel.seed !== want) {
       const item = document.querySelector('#tray .item[data-id="' + want + '"]');
       if (!item || item.classList.contains('locked')) {
         setStatus('無法選用種子：' + want + '（不存在或未解鎖）');
+        return false;
+      }
+      // 第 3 步：品項被藏起來了（在別的作物分類裡）→ 先切到它的分類，不去點看不見的品項
+      if (item.hidden) {
+        const grp = cropGroupOf(g.CFG, want);
+        const btn = document.querySelector('#cgrp62 button[data-cg62="' + grp.id + '"]');
+        if (!btn) {
+          setStatus('無法選用種子：' + want + '（找不到「' + grp.label + '」分類按鈕）');
+          return false;
+        }
+        btn.click();
+        setStatus('切換工具中（播種 → ' + grp.label + '）…');
         return false;
       }
       item.click();
@@ -1563,6 +1601,10 @@
       // 安全閘：每一種動作點下去之前，都重新確認那一格現在確實還是我們要處理的東西
       // 照顧工具一定要是「捉蟲」才點（其他選項會花錢、會讓有機作物變一般作物）
       if (kind === 'pest' && (S.sel.tool !== 'care' || S.sel.care !== 'catch' || S.sel.none49)) break;
+      // 播種工具的點擊（收成、播種、魚池）：分頁一定要在「作物」——停在設施、蝴蝶園分頁時，點地圖會被遊戲當成蓋設施、種寄主植物（會花錢）；
+      // 播種時，選著的種子一定是設定的作物
+      if ((kind === 'harvest' || kind === 'plant' || kind === 'pool') && (S.sel.tool !== 'seed' || !seedTabOk(S.sel))) break;
+      if (kind === 'plant' && (S.sel.none49 || S.sel.seed !== targetCrop.id)) break;
       // 施肥：一定是「照顧」工具的「有機肥」選項（不是化肥、農藥），倉庫真的有有機肥，而且那格現在確實還適合施肥
       if (kind === 'fert') {
         if (S.sel.tool !== 'care' || S.sel.care !== 'org' || S.sel.none49) break;

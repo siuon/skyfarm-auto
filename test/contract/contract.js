@@ -47,6 +47,9 @@ module.exports = {
     { prefix: '#ask47 .bs259', game: ['cf47 bs259'] }, // 賣出確認視窗：看到它就不能當成購買確認去按
     { prefix: '#dock .tool[data-tool="', game: ['id="dock"', 'data-tool='] },
     { prefix: '#tray .item[data-id="', game: ['id="tray"', 'data-id='] },
+    // 種子列的分頁（設施／作物／果樹／花苗／蝴蝶園）與作物分類（穀物、豆類…）：腳本要像真人一樣一步一步切到「作物 → 穀物 → 玉米」
+    { prefix: '#trayTabs button[data-tab="crops"]', game: ["TTAB.id = 'trayTabs'", 'data-tab="${c.id}"'] },
+    { prefix: '#cgrp62 button[data-cg62="', game: ["CGB62.id = 'cgrp62'", 'data-cg62="${c.id}"'] },
     { prefix: 'button[data-oe2543="tile"]', game: ['data-oe2543="tile"'] }, // 「這一格有：」選單
     { prefix: 'button[data-ck248="feed"]', game: ['data-ck248'] }, // 餓了的雞鴨小選單
     { prefix: 'button[data-m61="', game: ['data-m61'] }, // 機器小選單
@@ -63,6 +66,22 @@ module.exports = {
     { name: '除錯入口 window.__farm18（S 是 getter、act 轉呼叫最新版）', game: ['window.__farm18 = {', 'get S(){ return S; }', 'act: (x, y) => act(x, y)'] },
     { name: '除錯入口 window.__farm218（CFG、inMap）', game: ['window.__farm218'] },
     { name: '播種／照顧工具切換後要先選一個（none49）', game: ['none49', 'function noSelBlocks49'] },
+    {
+      name: '種子列：所有分頁、分類的品項都一直在畫面結構裡，沒顯示的只是 hidden（所以點看不見的品項不會切分頁／分類）',
+      game: [
+        'for (const el of items) el.hidden = CGOF62[el.dataset.id] !== g;',
+        "tray.querySelectorAll('.item').forEach(el => { const isT = !!CFG.trees[el.dataset.id]; el.hidden = tab === 'trees' ? !isT : isT; });",
+        "const g = b.dataset.cg62; if (g === curGroup62()) return; S.sel.cropGrp62 = g;",
+      ],
+    },
+    {
+      name: '播種工具停在「設施」分頁時，點地圖會被當成蓋設施（會花錢、不是播種）——所以腳本播種前一定要先切回「作物」分頁',
+      game: ["if (tool === 'seed' && S.sel.seedTab === 'facility' && S.sel.seedFac) return withTool('build', { build: S.sel.seedFac }, () => act(x, y));"],
+    },
+    {
+      name: '播種工具停在「蝴蝶園」分頁時，點地圖會被當成種寄主植物（會花錢、不是播種）',
+      game: ["if (S && !UI.expand && S.sel.tool === 'seed' && S.sel.seedTab === 'bfgarden'){"],
+    },
     {
       name: '照顧工具的「有機肥」：只能施在田裡還在長、沒枯萎、這一季沒施過的作物；每次扣倉庫 1 個有機肥，作物仍是有機（H.fert = org）',
       game: [

@@ -184,6 +184,23 @@ test('設定：糞便與雜草的物品代號、捉蟲的選項與次數', () =>
   assert.ok(isNum(CFG.pests.catchTaps) && CFG.pests.catchTaps >= 1);
 });
 
+test('設定 ui：種子列有「作物」分頁，作物分類（穀物…）涵蓋腳本會選的作物，每個作物最多屬於一類', () => {
+  const tabs = CFG.ui.trayTabs.seed.map((t) => t.id);
+  assert.ok(tabs.includes('crops'), '種子列要有「作物」分頁（id=crops）：' + tabs.join(','));
+  const groups = (CFG.ui.cropGroups || {}).groups;
+  assert.ok(Array.isArray(groups) && groups.length > 0, '作物分類在 ui.cropGroups.groups');
+  const seen = new Map();
+  for (const g of groups) {
+    assert.ok(g.id && Array.isArray(g.ids), '每個分類有 id 與 ids');
+    for (const id of g.ids) {
+      assert.ok(CFG.crops[id], '分類裡的 ' + id + ' 要是作物');
+      assert.ok(!seen.has(id), id + ' 同時在 ' + seen.get(id) + ' 與 ' + g.id);
+      seen.set(id, g.id);
+    }
+  }
+  assert.equal(seen.get('corn'), 'grain', '玉米在「穀物」分類（使用者回報的情境）');
+});
+
 test('設定 care.org（有機肥）：用倉庫的 organic_fert、每次種植 1 個、仍是有機作物；化肥則會讓作物失去有機身分且要花錢（腳本絕不用）', () => {
   const O = CFG.care.options.org;
   assert.ok(O, '照顧工具要有「有機肥」選項（id=org）');

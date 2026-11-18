@@ -6,6 +6,19 @@
 function makeCfg() {
   return {
     meta: { configVersion: 'fixture', saveFormatVersion: 1 },
+    // 種子列的分頁與作物分類（結構同官方 ui.trayTabs.seed／ui.cropGroups；分類只列測試用得到的作物）
+    ui: {
+      trayTabs: { seed: [{ id: 'facility' }, { id: 'crops' }, { id: 'trees' }, { id: 'flowers' }, { id: 'bfgarden' }] },
+      cropGroups: {
+        groups: [
+          { id: 'forage', label: '牧草', ids: ['pasture'] },
+          { id: 'grain', label: '穀物', ids: ['wheat', 'corn', 'rice'] },
+          { id: 'root', label: '根莖', ids: ['potato', 'taro'] },
+          { id: 'fruitveg', label: '果菜', ids: ['tomato', 'pumpkin'] },
+        ],
+        ungrouped: [],
+      },
+    },
     rules: { moistMaxLevel: 4, waterPerTap: 1, animalStackMax: 0 },
     levels: [
       { level: 1, unlocks: ['wheat', 'pasture', 'egg_hen'] },
