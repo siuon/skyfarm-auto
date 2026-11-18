@@ -41,7 +41,7 @@ function attachWorld(env, o = {}) {
     acts: [], // 每次 act 的紀錄
     fullPrompts: 0, // 跳出「農產倉庫滿了」的次數
     // 「絕不做」計數
-    shipped: [], hivePanels: 0, upgrades: 0, chemUsed: 0, deletedWild: 0, boughtFeed: 0, coinsSpentOnFeed: 0,
+    shipped: [], hivePanels: 0, upgrades: 0, chemUsed: 0, fertApplied: [], deletedWild: 0, boughtFeed: 0, coinsSpentOnFeed: 0,
     toasts: [],
     // 機器人面板
     unitPanels: 0, swaps: 0, partBuys: [], partCoinsSpent: 0,
@@ -121,6 +121,9 @@ function attachWorld(env, o = {}) {
   };
   for (const id of Object.keys(CFG.crops)) addTray(id, () => { S.sel.seed = id; });
   addTray('catch', () => { S.sel.care = 'catch'; });
+  addTray('org', () => { S.sel.care = 'org'; });
+  addTray('chem', () => { S.sel.care = 'chem'; }); // 腳本絕不該選這兩個：點下去會記成 chemUsed
+  addTray('pesticide', () => { S.sel.care = 'pesticide'; });
   world.toolBtn = toolBtn; world.trayItem = trayItem;
   if (o.lockedTray) for (const id of o.lockedTray) trayItem[id].classList.add('locked');
 
@@ -295,6 +298,14 @@ function attachWorld(env, o = {}) {
       if (T && T.t === 'soil' && T.crop) {
         if (S.sel.care === 'catch') {
           if (T.crop.pest) { T.crop.pestTaps = (T.crop.pestTaps || 0) + 1; if (T.crop.pestTaps >= 3) { T.crop.pest = false; T.crop.pestTaps = 0; } }
+        } else if (S.sel.care === 'org') { // 有機肥（遊戲 careAt：這一季只能施一次；已成熟、枯萎不能施；倉庫要有有機肥）
+          const H = T.crop, C = CFG.crops[H.id];
+          if (H.fert) world.toasts.push('這一季已經施過有機肥了');
+          else if (H.wither) world.toasts.push('作物枯萎了，先澆水救回來');
+          else if (H.prog >= C.growSeconds) world.toasts.push('已經成熟了，收成後下一季再施肥');
+          else if (!((S.inv.organic_fert || 0) > 0)) world.toasts.push('倉庫裡沒有有機肥');
+          else if (world.fertBlocked) world.toasts.push('（測試：點了沒效果）');
+          else { take('organic_fert', 1); H.fert = 'org'; world.fertApplied.push(k); }
         } else { world.chemUsed += 1; }
       } else if (T && T.t === 'tree') {
         if (S.sel.care === 'catch') {
@@ -372,6 +383,7 @@ function attachWorld(env, o = {}) {
     }
     RT.lastAnimalTap = null;
     actCore(x, y);
+    if (world.afterAct) world.afterAct(k); // 測試用：每次點完呼叫（模擬「點的當中，遊戲狀態被別的東西改了」）
   }
   world.act = act;
 

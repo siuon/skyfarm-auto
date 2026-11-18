@@ -17,7 +17,7 @@ const SCRIPT_PATH = path.join(__dirname, '..', '..', 'skyfarm-auto.js');
 
 // 要匯出的內部名稱。名稱在腳本裡不存在的話，載入時會丟 ReferenceError，測試立刻失敗。
 const FUNCS = [
-  'game', 'storageInfo', 'isModalOpen', 'modalTitle', 'isRipe', 'hostOf', 'treeReady', 'poolState', 'machineState', 'machineCap', 'loadWanted', 'weedReserve', 'adjustWeedQty',
+  'game', 'storageInfo', 'isModalOpen', 'modalTitle', 'isRipe', 'hostOf', 'treeReady', 'poolState', 'machineState', 'machineCap', 'loadWanted', 'weedReserve', 'adjustWeedQty', 'fertWanted',
   'isAdultAnimal', 'animalHungry', 'animalFeedNeed', 'targetStock', 'fmtSec', 'isSellTarget', 'isSellWeed', 'unlockLevel', 'islandsInfo', 'islandPlan', 'toggleIslandMode',
   'coerceSetting', 'crossCheck', 'loadSettings', 'applySetting', 'resetSetting', 'resetAllSettings', 'fmtSetting',
   'openSettingsPanel', 'closeSettingsPanel', 'toggleSettingsPanel', 'syncSettingsPanel',

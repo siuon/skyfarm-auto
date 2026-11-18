@@ -71,11 +71,31 @@ test('靜態檢查：只能對遊戲網站執行（@match 在載入器；腳本�
   assert.deepEqual(urls, [], '程式碼裡不該有任何網址字面值：' + urls.join(', '));
 });
 
-test('靜態檢查：絕不碰花錢的選項——程式碼裡沒有農藥、化肥、有機肥、升級機器、賣出遊戲物件的字串', () => {
+test('靜態檢查：絕不碰花錢的選項——程式碼裡沒有農藥、化肥、升級機器、賣出遊戲物件的字串', () => {
   for (const s of ['pesticide', "'chem'", '"chem"', 'upgrade', 'sellBase', 'shovel', "'remove'", "'store'", 'buy(', 'purchase']) {
     assert.ok(!code.includes(s), '程式碼裡不該出現：' + s);
   }
-  assert.ok(code.includes("'catch'"), '照顧工具只用 catch');
+  assert.ok(code.includes("'catch'"), '照顧工具用 catch（捉蟲，免費）');
+});
+
+test('靜態檢查：照顧工具只有兩個選項（捉蟲 catch、有機肥 org），施肥前一定核對選項、庫存與那格的條件', () => {
+  // 選項只認這兩個，其他一律不選
+  assert.match(code, /function prepareCareTool\(g, opt\) \{\s*if \(opt !== 'catch' && opt !== 'org'\) return null;/);
+  // 呼叫端只會傳 'catch' 或 'org'（careOpt 的兩種值）
+  assert.match(code, /const careOpt = pests\.length > 0 \? 'catch' : 'org';/);
+  assert.equal((code.match(/prepareCareTool\(/g) || []).length, 2, '定義一處、呼叫一處');
+  // 'org' 只出現在這幾個受控的地方：選項檢查、選哪個、點之前的安全閘、ok 判斷
+  const orgs = code.match(/'org'/g) || [];
+  assert.equal(orgs.length, 4, "'org' 出現的位置：prepareCareTool 的檢查、careOpt、安全閘、ok 判斷；有新增請確認每一處都有閘");
+  // 施肥點之前的閘：工具＝照顧、選項＝org、已選好、倉庫有肥、那格現在還適合施肥
+  const gate = /if \(kind === 'fert'\) \{([\s\S]*?)\n      \}/.exec(code);
+  assert.ok(gate, '找得到施肥的安全閘');
+  assert.match(gate[1], /S\.sel\.tool !== 'care' \|\| S\.sel\.care !== 'org' \|\| S\.sel\.none49\) break;/);
+  assert.match(gate[1], /organic_fert/);
+  assert.match(gate[1], /!fertWanted\(T0, CFG\)\) continue;/);
+  // 腳本用 organic_fert 的地方要有限（庫存、閘）；賣出範圍另有測試（isSellTarget('organic_fert') 是 false）
+  const uses = (code.match(/organic_fert/g) || []).length;
+  assert.ok(uses >= 2 && uses <= 12, 'organic_fert 的用法要有限（庫存、閘）：' + uses);
 });
 
 test('靜態檢查：機器小選單只會按我們指定的按鈕（collect / load），不會有寫死的 upgrade', () => {
@@ -152,6 +172,10 @@ test('釘住的使用者決定：預設值', () => {
   // 2026-11-18 使用者要求：自動堆肥（堆肥桶可以有多個）、賣雜草時為堆肥保留一部分
   assert.equal(C.autoCompost, true, '堆肥桶自動投料預設開（原料是免費的便便與雜草）');
   assert.equal(C.compostKeepRounds, 2, '賣雜草時保留「所有堆肥桶各放滿 2 輪」的雜草');
+  // 2026-11-18 使用者要求：預設還有 3 小時以上的作物自動施肥（有機肥、免費；絕不用化肥）
+  assert.equal(C.autoFertilize, true, '長時間作物自動施有機肥預設開');
+  assert.equal(C.fertilizeMinMinutes, 180, '生長時間 ≥ 3 小時（水稻起）才施');
+  assert.equal(C.fertilizeOtherCrops, true);
   assert.equal(C.waterBelow, 1);
   assert.equal(C.waterUpTo, null);
 });

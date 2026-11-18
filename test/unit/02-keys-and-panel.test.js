@@ -200,6 +200,7 @@ test('標籤：點一下縮成小方格（不會消失）、再點一下展開�
   const text = t.badge.textContent;
   assert.match(text, /收成 0｜播種 0｜澆水 0｜捉蟲 0｜撿拾 0｜賣出 0 次/);
   assert.match(text, /果樹 0｜魚池 0｜機器 0｜雜物 0｜餵食 0/);
+  assert.match(text, /蜂蜜 0｜出貨 0｜換耗材 0｜寵物飼料 0｜施肥 0/);
   assert.match(text, /開啟後還沒做成任何事/);
 });
 

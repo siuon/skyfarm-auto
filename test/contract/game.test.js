@@ -180,8 +180,20 @@ test('設定：糞便與雜草的物品代號、捉蟲的選項與次數', () =>
   assert.ok(isNum(CFG.items.weed.sellPrice), '雜草有售價，倉庫批次賣出才會給它勾選框（賣作物時一併賣雜草）');
   assert.equal(CFG.items.weed.category, 'material', '雜草在倉庫的「肥料」分類（農產倉庫分頁內）');
   assert.ok(CFG.care.options.catch, '照顧工具要有「捉蟲」選項（id=catch）');
-  assert.ok(CFG.care.options.pesticide && CFG.care.options.chem, '農藥與化肥選項還在（腳本用「只選 catch」來避開它們）');
+  assert.ok(CFG.care.options.pesticide && CFG.care.options.chem, '農藥與化肥選項還在（腳本用「只選 catch／org」來避開它們）');
   assert.ok(isNum(CFG.pests.catchTaps) && CFG.pests.catchTaps >= 1);
+});
+
+test('設定 care.org（有機肥）：用倉庫的 organic_fert、每次種植 1 個、仍是有機作物；化肥則會讓作物失去有機身分且要花錢（腳本絕不用）', () => {
+  const O = CFG.care.options.org;
+  assert.ok(O, '照顧工具要有「有機肥」選項（id=org）');
+  assert.equal(O.item, 'organic_fert', '腳本用 S.inv.organic_fert 判斷有沒有肥料');
+  assert.equal(O.organicOK, true, '有機肥不會讓有機作物變一般作物');
+  assert.ok(isNum(O.growth) && isNum(O.yield) && O.yield > 0, '有機肥增產、加速');
+  assert.equal(CFG.care.oneFertPerPlanting, true, '每次種植只能施一個肥（腳本用 fert 旗標判斷這一季施過沒）');
+  assert.ok(CFG.items.organic_fert, '有機肥是倉庫物品');
+  assert.equal(CFG.care.options.chem.organicOK, false, '化肥會讓作物失去有機身分（所以腳本不用）');
+  for (const [id, C] of Object.entries(CFG.crops)) assert.ok(isNum(C.growSeconds) && C.growSeconds > 0, id + ' 要有生長時間（腳本用它挑要施肥的作物）');
 });
 
 test('設定 consumables 與 robots：耗材欄位、重型機器人手動換、機器人種類的充電樁都存在', () => {

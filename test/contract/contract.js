@@ -47,7 +47,6 @@ module.exports = {
     { prefix: '#ask47 .bs259', game: ['cf47 bs259'] }, // 賣出確認視窗：看到它就不能當成購買確認去按
     { prefix: '#dock .tool[data-tool="', game: ['id="dock"', 'data-tool='] },
     { prefix: '#tray .item[data-id="', game: ['id="tray"', 'data-id='] },
-    { prefix: '#tray .item[data-id="catch"]', game: ['id="tray"', 'data-id='] },
     { prefix: 'button[data-oe2543="tile"]', game: ['data-oe2543="tile"'] }, // 「這一格有：」選單
     { prefix: 'button[data-ck248="feed"]', game: ['data-ck248'] }, // 餓了的雞鴨小選單
     { prefix: 'button[data-m61="', game: ['data-m61'] }, // 機器小選單
@@ -64,6 +63,16 @@ module.exports = {
     { name: '除錯入口 window.__farm18（S 是 getter、act 轉呼叫最新版）', game: ['window.__farm18 = {', 'get S(){ return S; }', 'act: (x, y) => act(x, y)'] },
     { name: '除錯入口 window.__farm218（CFG、inMap）', game: ['window.__farm218'] },
     { name: '播種／照顧工具切換後要先選一個（none49）', game: ['none49', 'function noSelBlocks49'] },
+    {
+      name: '照顧工具的「有機肥」：只能施在田裡還在長、沒枯萎、這一季沒施過的作物；每次扣倉庫 1 個有機肥，作物仍是有機（H.fert = org）',
+      game: [
+        "if (T.t !== 'soil'){ toast('肥料只能用在田裡的作物'); return; }",
+        "if (H.wither){ toast('作物枯萎了，先澆水救回來'); return; }",
+        "if (H.prog >= CFG.crops[H.id].growSeconds){ toast('已經成熟了，收成後下一季再施肥'); return; }",
+        "invTake('organic_fert', 1); H.fert = 'org';",
+        "S.sel.care = id; UIbuildTray(); updateHint();",
+      ],
+    },
     { name: '全部隱藏（ui-hide）時點擊會被忽略', game: ["classList.contains('ui-hide')"] },
     {
       name: '擴地模式（UI.expand）：狀態列有「擴地模式」標籤；此時點地圖一律當成擴地點擊；切換工具或 Esc 才結束',

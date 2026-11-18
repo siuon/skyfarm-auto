@@ -3,7 +3,7 @@
  *
  * 由 Tampermonkey 透過 @require 載入（設定見 skyfarm-auto.loader.user.js）。
  *
- * 功能（0.18.0）：
+ * 功能（0.19.0）：
  *   - Alt+Shift+S：跳出輸入框，輸入「這次要自動種植的作物」（中文名稱或代號皆可）
  *   - Alt+Shift+A：開啟／關閉自動功能（每次載入頁面一律預設 OFF，不會記住 ON）；
  *                  還沒設定作物就按開啟時，會先跳出輸入框，確認後才開始
@@ -20,7 +20,8 @@
  *          有空田但金幣不夠買種子 → 直接賣掉倉庫裡設定的作物換錢，不等倉庫快滿（CONFIG.sellWhenCantPlant）
  *       4. 還在長（或已枯萎）的設定作物，濕度低於門檻 → 切到澆水工具澆到滿（只用雨水）
  *       5. 作物長蟲 → 切到「照顧」工具選「捉蟲」，每格點 3 下抓光（免費）；蟲沒抓光前該格不收成、不澆水。
- *          不噴農藥、不施肥（會花錢，也會讓有機作物變一般作物）。其他種類作物長蟲也會抓。
+ *          不噴農藥、不用化肥（會花錢，也會讓有機作物變一般作物）。其他種類作物長蟲也會抓。
+ *          （同一個「照顧」工具也用來施有機肥，見第 13 項。）
  *       6. 地上的動物糞便 → 點掉（收進倉庫）；生產型動物累積的產物（蛋、奶、羊毛…）→ 點動物收走。
  *          長大了的肉用動物 → 出貨（點一下，肉進倉庫、動物就沒了；遊戲規定長大 2 天沒收牠會自己死掉，
  *          所以收掉才是對的；小動物不會補買，CONFIG.autoHarvestMeatAnimals）。還沒長大的肉用動物絕不點（要餵，不是收）。
@@ -58,8 +59,12 @@
  *      12. 堆肥桶（CONFIG.autoCompost，預設開，可以有很多個、每座島都行）：桶有空位、倉庫的便便（4）與雜草（2）夠一批就投料，
  *          一次投到放滿（Lv5 一桶 5 批）；做好的有機肥由 autoCollectMachines 收。便便和雜草都是免費原料，不花金幣。
  *          堆肥桶只看 autoCompost，和下面的 autoLoadMachines 無關。有機肥在倉庫的庫存到 machineMaxStock 就先不投
- *          （腳本不施肥也不賣有機肥）。賣出時雜草會保留一部分給堆肥桶（CONFIG.compostKeepRounds，見「倉庫賣出」）；
+ *          （腳本不賣有機肥）。賣出時雜草會保留一部分給堆肥桶（CONFIG.compostKeepRounds，見「倉庫賣出」）；
  *          便便本來就不賣（賣價 0）。
+ *      13. 施有機肥（CONFIG.autoFertilize，預設開）：田裡還在長、沒枯萎、這一季還沒施過肥、生長時間 ≥ fertilizeMinMinutes（預設 180 分鐘＝3 小時，
+ *          水稻起）的作物，用「照顧」工具的「有機肥」選項點一下（每次種植最多 1 個，產量與生長速度各 +10%，作物仍是有機作物）。
+ *          只用倉庫現有的有機肥（來自堆肥桶）：沒有就不施、不會買；肥料不夠分時先給單次收成價值高的。
+ *          其他種類的作物也施（fertilizeOtherCrops）。有蟲先抓蟲再施肥。絕不使用化肥、農藥（會花錢、會讓有機作物變一般作物）。
  *       以下三項會用到你的資源，預設關閉，要用請改 CONFIG：
  *          autoWaterTrees（果樹也澆雨水）、autoFeedFish（用倉庫現有的飼料餵魚，不會自動買）、
  *          autoLoadMachines（其他機器自動投料，只投 loadMachineIds 裡的機器，成品庫存有上限；不含堆肥桶）
@@ -95,7 +100,7 @@
   'use strict';
 
   const NAME = 'SkyFarmAuto';
-  const VERSION = '0.18.0';
+  const VERSION = '0.19.0';
   const BADGE_ID = 'skyfarm-auto-badge';
   const PANEL_ID = 'skyfarm-auto-panel';
   const SETTINGS_PANEL_ID = 'skyfarm-auto-settings-panel';
@@ -137,9 +142,12 @@
     compostKeepRounds: 2, // 賣雜草時，保留「把所有堆肥桶各放滿這麼多輪」要用的雜草（每批 2 株；Lv5 一桶放滿一輪 10 株）；0＝不保留。便便不會被賣
     autoLoadMachines: false, // 其他機器（不含堆肥桶）空了自動投料（會消耗倉庫的材料；預設關閉）
     loadMachineIds: ['fish_feed_machine'], // 開啟 autoLoadMachines 時，只對這些機器投（玉米餅機會把很值錢的玉米變成便宜的飼料，所以不在內；堆肥桶看 autoCompost）
-    machineMaxStock: 100, // 投料前，成品在倉庫的庫存已經 ≥ 此值就不再投（避免成品把倉庫塞滿；有機肥也一樣，腳本不施肥、不賣有機肥）
-    autoCatchPests: true, // 作物、果樹長蟲時，用「照顧」工具的「捉蟲」（免費）點到抓光；不噴農藥、不施肥
+    machineMaxStock: 100, // 投料前，成品在倉庫的庫存已經 ≥ 此值就不再投（避免成品把倉庫塞滿；有機肥也一樣：腳本只拿它施肥（autoFertilize）、不賣，用不完庫存到這個數堆肥桶就先停）
+    autoCatchPests: true, // 作物、果樹長蟲時，用「照顧」工具的「捉蟲」（免費）點到抓光；不噴農藥、不用化肥
     catchPestsOnOtherCrops: true, // 其他種類作物與果樹長蟲也抓（蟲會往旁邊擴散；抓蟲免費，不影響收成與庫存）
+    autoFertilize: true, // 還在長、生長時間 ≥ fertilizeMinMinutes 的作物，用倉庫現有的有機肥施肥（「照顧」工具的有機肥：免費、每次種植 1 個、作物仍是有機）。不用化肥、不買肥料
+    fertilizeMinMinutes: 180, // 生長時間至少幾分鐘的作物才施肥。有機肥來自堆肥桶、數量有限（Lv5 一台每小時約 3 個），留給長時間、高單價的作物；預設 3 小時（水稻起）
+    fertilizeOtherCrops: true, // 其他種類（不是設定作物）的作物，只要夠長也施肥
     autoWater: true, // 還在長的作物（含枯萎的）自動澆水；只用雨水，雨水不夠就暫停
     waterBelow: 1, // 濕度（0～4 級，每澆一下 +1 級）低於這個值就開始澆
     waterUpTo: null, // 澆到幾級為止；null＝澆到滿
@@ -215,7 +223,7 @@
 
   const newStats = () => ({
     harvest: 0, plant: 0, water: 0, pest: 0, pick: 0, sellRuns: 0,
-    clean: 0, fruit: 0, fish: 0, machine: 0, feed: 0, honey: 0, meat: 0, parts: 0, hops: 0, petFood: 0,
+    clean: 0, fruit: 0, fish: 0, machine: 0, feed: 0, honey: 0, meat: 0, parts: 0, hops: 0, petFood: 0, fert: 0,
   });
   let stats = newStats();
   const wetting = new Set(); // 正在澆到目標濕度的格子（避免在門檻附近來回澆）
@@ -297,6 +305,23 @@
 
   // 會長蟲的「宿主」：田裡是作物（T.crop），果樹本身就是宿主
   const hostOf = (T) => (!T ? null : T.t === 'soil' ? T.crop : T.t === 'tree' ? T : null);
+
+  // 這格作物要不要施有機肥。條件和遊戲的「照顧／有機肥」一致（田裡的作物、還沒成熟、沒枯萎、這一季還沒施過肥；
+  // 否則點下去只會跳提示）。有機肥來自堆肥桶、數量有限，所以只給生長時間夠長的作物（fertilizeMinMinutes）；
+  // 不是設定作物的其他作物看 fertilizeOtherCrops。只用有機肥：不花金幣、作物不會變成一般作物。
+  function fertWanted(T, CFG) {
+    if (!CONFIG.autoFertilize || !T || T.t !== 'soil' || !T.crop) return false;
+    const H = T.crop;
+    const C = CFG.crops[H.id];
+    if (!C || H.wither || H.fert || !(H.prog < C.growSeconds)) return false;
+    if (!(C.growSeconds >= CONFIG.fertilizeMinMinutes * 60)) return false;
+    return !!CONFIG.fertilizeOtherCrops || (!!targetCrop && H.id === targetCrop.id);
+  }
+  // 一次收成的價值（售價 × 產量）：有機肥的增產（+10%）和它成正比，肥料不夠分時先給值錢的作物
+  const fertValue = (H, CFG) => {
+    const C = (CFG.crops && CFG.crops[H.id]) || {};
+    return (C.sellPrice || 0) * (C.yield || 1);
+  };
 
   // 果樹結果了（和遊戲畫面上出現果實的條件相同）
   const treeReady = (T, CFG) => {
@@ -993,15 +1018,16 @@
     return true;
   }
 
-  // 準備好「照顧」工具並選用「捉蟲」（免費）。
-  // 絕不使用施肥、噴農藥：會花錢，而且會讓有機作物變成一般作物。
+  // 準備好「照顧」工具並選用指定的選項。只允許兩種：「捉蟲」（免費）、「有機肥」（用倉庫現有的有機肥，免費、作物仍是有機）。
+  // 絕不使用化肥、噴農藥：會花錢，而且會讓有機作物變成一般作物。
   // 照顧也是需要先在下方選項列點一下才會生效的工具（S.sel.none49），所以選項一定要點。
-  // 回傳 true＝可以抓蟲了；false＝這個週期只做了準備動作；null＝這個工具用不了（例如還沒解鎖）。
-  function prepareCareTool(g) {
+  // 回傳 true＝可以點了；false＝這個週期只做了準備動作；null＝這個工具或選項用不了（例如還沒解鎖）。
+  function prepareCareTool(g, opt) {
+    if (opt !== 'catch' && opt !== 'org') return null;
     const sel = g.S.sel;
     if (!ensureToolIs(g, 'care')) return false;
-    if (sel.none49 || sel.care !== 'catch') {
-      const item = document.querySelector('#tray .item[data-id="catch"]');
+    if (sel.none49 || sel.care !== opt) {
+      const item = document.querySelector('#tray .item[data-id="' + opt + '"]');
       if (!item || item.classList.contains('locked')) return null;
       item.click();
       return false;
@@ -1106,6 +1132,7 @@
     const plants = [];
     const waters = [];
     const pests = [];
+    const fertCand = []; // 想施有機肥的作物格：[格子, 單次收成的價值]；排完才依倉庫的有機肥庫存取前幾格
     const pickups = []; // 要用「收成」工具點的有價值東西：糞便、動物產物、果樹、機器成品。[格子, 種類, 附加資料]
     const pools = []; // 魚池（用「播種」工具點才不會跳小選單）：[格子, 'pool', 魚池代號]
     const loads = []; // 機器投料（用「收成」工具點，再按小選單的「投放材料」）
@@ -1321,6 +1348,10 @@
           if (!(cdo && cdo.until > now)) otherRipe.push([k, (CFG.crops[T.crop.id] || {}).yield || 1]);
         } else {
           others += 1;
+          if (fertWanted(T, CFG)) {
+            const cdf = cooldown.get(ck(k));
+            if (!(cdf && cdf.until > now)) fertCand.push([k, fertValue(T.crop, CFG)]);
+          }
         }
         continue;
       }
@@ -1346,6 +1377,7 @@
             growing += 1;
             minLeft = Math.min(minLeft, CFG.crops[T.crop.id].growSeconds - T.crop.prog);
           }
+          if (fertWanted(T, CFG)) fertCand.push([k, fertValue(T.crop, CFG)]);
           if (canWater) wantWater(k, T, T.crop.wither); // 還在長的作物（含枯萎的）：濕度不夠就澆
         }
       } else if (!T.flower) {
@@ -1358,6 +1390,13 @@
     const hints = [];
     if (CONFIG.autoWater && !canWater) hints.push('雨水不足，暫停澆水');
     if (others > 0) hints.push('略過其他作物 ' + others + ' 格');
+    // 施有機肥：肥料有限（倉庫有幾個就最多施幾格），單次收成價值高的先施；一格一個，不夠就留到有肥料再說
+    fertCand.sort((a, b) => b[1] - a[1]);
+    const fertStock = Math.max(0, Math.floor(Number(S.inv.organic_fert) || 0));
+    const ferts = fertCand.slice(0, fertStock).map((c) => c[0]);
+    if (fertCand.length > ferts.length) {
+      hints.push('倉庫的有機肥不夠，' + (fertCand.length - ferts.length) + ' 格長時間作物先不施肥');
+    }
     // 把「為什麼沒做」寫出來，不要讓右下角只說「沒有需要處理的田」
     if (hungryUnfed > 0) {
       const lack = Object.entries(feedShort)
@@ -1450,7 +1489,7 @@
     // 機器則一定會跳小選單（要再按「收成」）。魚池用「播種」工具直接收，用收成工具會跳小選單。
     const handQueue = pickups.concat(feeds, loads, cleanups);
     const work = {
-      care: pests.length > 0,
+      care: pests.length + ferts.length > 0, // 捉蟲與施有機肥都用「照顧」工具（選項不同；有蟲先抓）
       seed: harvests.length + plants.length + pools.length > 0,
       hand: handQueue.length > 0,
       water: waters.length + tilts.length > 0, // 扶正也用澆水工具
@@ -1460,15 +1499,17 @@
     const tool = S.sel.tool;
     const pickMode = () => (work[tool] ? tool : ['care', 'seed', 'hand', 'water'].find((m) => work[m]));
     let mode = pickMode();
+    // 「照顧」工具這個週期用哪個選項：有蟲先抓（捉蟲），沒有蟲才施有機肥
+    const careOpt = pests.length > 0 ? 'catch' : 'org';
     if (mode === 'care') {
-      const r = prepareCareTool(g);
+      const r = prepareCareTool(g, careOpt);
       if (r === null) {
-        // 捉蟲工具用不了（還沒解鎖或找不到按鈕）：不要卡住，改做別的事
-        hints.push('捉蟲工具無法使用（未解鎖？）');
+        // 照顧工具或這個選項用不了（還沒解鎖或找不到按鈕）：不要卡住，改做別的事
+        hints.push(careOpt === 'catch' ? '捉蟲工具無法使用（未解鎖？）' : '施肥工具無法使用（未解鎖？）');
         work.care = false;
         mode = pickMode();
       } else if (!r) {
-        switching('照顧／捉蟲');
+        switching(careOpt === 'catch' ? '照顧／捉蟲' : '照顧／有機肥');
         return { work: true };
       }
     }
@@ -1483,7 +1524,7 @@
 
     let queue;
     if (mode === 'care') {
-      queue = pests.map((k) => [k, 'pest']);
+      queue = careOpt === 'catch' ? pests.map((k) => [k, 'pest']) : ferts.map((k) => [k, 'fert']);
     } else if (mode === 'water') {
       if (!ensureToolIs(g, 'water')) {
         switching('澆水');
@@ -1522,6 +1563,12 @@
       // 安全閘：每一種動作點下去之前，都重新確認那一格現在確實還是我們要處理的東西
       // 照顧工具一定要是「捉蟲」才點（其他選項會花錢、會讓有機作物變一般作物）
       if (kind === 'pest' && (S.sel.tool !== 'care' || S.sel.care !== 'catch' || S.sel.none49)) break;
+      // 施肥：一定是「照顧」工具的「有機肥」選項（不是化肥、農藥），倉庫真的有有機肥，而且那格現在確實還適合施肥
+      if (kind === 'fert') {
+        if (S.sel.tool !== 'care' || S.sel.care !== 'org' || S.sel.none49) break;
+        if (!((S.inv.organic_fert || 0) >= 1)) break;
+        if (!fertWanted(T0, CFG)) continue;
+      }
       // 只點糞便格，以及「生產型」動物且確實有產物的格（肉用動物一點就會被宰掉）
       if (kind === 'poop' && (!T0 || T0.t !== 'poop')) continue;
       if (kind === 'product') {
@@ -1587,6 +1634,7 @@
       if (kind === 'harvest') ok = !!T && !T.crop;
       else if (kind === 'plant') ok = !!T && !!T.crop;
       else if (kind === 'pest') ok = !!T && (!H || !H.pest || (H.pestTaps || 0) > before.taps);
+      else if (kind === 'fert') ok = !!H && H.fert === 'org';
       else if (kind === 'poop') ok = !T || T.t !== 'poop';
       else if (kind === 'product') ok = !T || (T.stack || 0) < before.stack;
       else if (kind === 'honey') ok = !!T && isHive(T, CFG) && honeyStored(T) < before.honey;
@@ -1613,6 +1661,8 @@
           stats.plant += 1;
         } else if (kind === 'pest') {
           if (!H || !H.pest) stats.pest += 1; // 蟲抓光了才算一格（每格要點好幾下）
+        } else if (kind === 'fert') {
+          stats.fert += 1;
         } else if (kind === 'feed') {
           stats.feed += 1;
         } else if (kind === 'poop' || kind === 'product') {
@@ -2158,7 +2208,7 @@
         '果樹 ' + stats.fruit + '｜魚池 ' + stats.fish + '｜機器 ' + stats.machine + '｜雜物 ' + stats.clean +
           '｜餵食 ' + stats.feed
       );
-      lines.push('蜂蜜 ' + stats.honey + '｜出貨 ' + stats.meat + '｜換耗材 ' + stats.parts + '｜寵物飼料 ' + stats.petFood);
+      lines.push('蜂蜜 ' + stats.honey + '｜出貨 ' + stats.meat + '｜換耗材 ' + stats.parts + '｜寵物飼料 ' + stats.petFood + '｜施肥 ' + stats.fert);
       if (islandLine) lines.push(islandLine);
       // 上一次真的做成事的時間：數字不動、又一直很久以前，就是停住了，看下一行的原因
       lines.push(lastActionAt ? '上次動作：' + fmtSec((Date.now() - lastActionAt) / 1000) + '前' : '開啟後還沒做成任何事');
@@ -2633,8 +2683,11 @@
       num('waterBelow', '濕度低於幾級開始澆', '濕度 0～4 級（每澆一下 +1 級）。低於這個值就開始澆。', 0, 4, '級', 'num'),
       num('waterUpTo', '澆到幾級為止', '澆到這個濕度就停。留空＝澆到滿。不能小於「開始澆的濕度」。', 1, 4, '級', 'numOrNull'),
       bool('autoWaterTrees', '果樹也澆水', '果樹也澆雨水（會和作物搶水，預設關閉）。'),
-      bool('autoCatchPests', '自動捉蟲', '作物、果樹長蟲時，用「照顧」工具的「捉蟲」（免費）點到抓光。絕不噴農藥、不施肥（那會花錢，還會讓有機作物變一般作物）。'),
+      bool('autoCatchPests', '自動捉蟲', '作物、果樹長蟲時，用「照顧」工具的「捉蟲」（免費）點到抓光。絕不噴農藥、不用化肥（那會花錢，還會讓有機作物變一般作物）。'),
       bool('catchPestsOnOtherCrops', '其他作物與果樹長蟲也抓', '蟲會往旁邊擴散，所以其他種類的作物、果樹長蟲也一起抓（抓蟲免費，不影響收成與庫存）。'),
+      bool('autoFertilize', '長時間作物自動施有機肥', '還在長、生長時間夠長（見下一項）的作物，用「照顧」工具的「有機肥」施肥：每次種植 1 個、產量與生長速度各 +10%，作物仍是有機作物。只用倉庫現有的有機肥（來自堆肥桶），沒有就不施、不會去買；絕不用化肥。'),
+      num('fertilizeMinMinutes', '生長時間至少幾分鐘才施肥', '有機肥數量有限（一台 Lv5 堆肥桶每小時約 3 個），留給生長時間長、單價高的作物。預設 180 分鐘（3 小時，水稻起）。肥料不夠分時，先給單次收成價值高的。', 1, 1440, '分鐘'),
+      bool('fertilizeOtherCrops', '其他作物也施肥', '不是設定作物的其他作物，只要夠長也施有機肥。關閉＝只替設定的作物施肥。'),
     ]],
     ['動物與寵物', [
       bool('autoPickPoop', '撿糞便', '地上的動物糞便自動點掉，收進倉庫（倉庫沒空位就暫停）。'),
@@ -2659,7 +2712,7 @@
       num('compostKeepRounds', '賣雜草時為堆肥保留幾輪', '倉庫賣雜草時，留下「把所有堆肥桶各放滿這麼多輪」要用的雜草（每批 2 株；一台 Lv5 堆肥桶放滿一輪要 10 株、三台就是 30 株）。0＝不保留、雜草全賣。便便本來就不賣（賣價 0），不需要保留。沒開堆肥或沒有堆肥桶時不保留。', 0, 10, '輪'),
       bool('autoLoadMachines', '其他機器自動投料', '其他機器空了自動投料，會消耗倉庫的材料（預設關閉）。只對下一項勾選的機器投；堆肥桶不在這裡，看上面的「堆肥桶自動投料」。'),
       { key: 'loadMachineIds', type: 'machines', label: '要自動投料的機器', desc: '只有勾選的機器才會被自動投料（堆肥桶另有開關，不在這裡）。玉米餅機會把很值錢的玉米變成便宜的飼料，所以預設沒勾。' },
-      num('machineMaxStock', '成品庫存上限', '投料前，這種成品在倉庫的庫存已經 ≥ 這個數就不再投，避免成品把倉庫塞滿。有機肥也一樣：腳本不施肥、也不賣有機肥，庫存到這個數堆肥桶就先停。', 0, 10000, '個'),
+      num('machineMaxStock', '成品庫存上限', '投料前，這種成品在倉庫的庫存已經 ≥ 這個數就不再投，避免成品把倉庫塞滿。有機肥也一樣：腳本只拿它施肥（見「長時間作物自動施有機肥」）、不賣，用不完庫存到這個數堆肥桶就先停。', 0, 10000, '個'),
     ]],
     ['地上雜物', [
       bool('autoStraighten', '扶正歪掉的裝飾', '被風吹歪的裝飾、倒下的柵欄自動扶正（免費、不佔倉庫）。'),

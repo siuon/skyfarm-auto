@@ -19,6 +19,11 @@ function makeCfg() {
       tomato: { name: '番茄', seedCost: 8, growSeconds: 300, yield: 2, sellPrice: 20 },
       potato: { name: '馬鈴薯', seedCost: 12, growSeconds: 600, yield: 3, sellPrice: 30 },
       pasture: { name: '牧草', seedCost: 2, growSeconds: 60, yield: 5, sellPrice: 1 },
+      // 長時間作物（施有機肥的門檻是 3 小時＝10800 秒；數值取自官方 2.68.1）
+      taro: { name: '芋頭', seedCost: 125, growSeconds: 9000, yield: 1, sellPrice: 480 },
+      rice: { name: '水稻', seedCost: 120, growSeconds: 10800, yield: 1, sellPrice: 510 },
+      pumpkin: { name: '南瓜', seedCost: 140, growSeconds: 14400, yield: 1, sellPrice: 580 },
+      coffee: { name: '咖啡', seedCost: 460, growSeconds: 36000, yield: 1, sellPrice: 1770 },
     },
     trees: {
       orange: { name: '柳丁', firstFruitSeconds: 36000, fruitIntervalSeconds: 10800 },
