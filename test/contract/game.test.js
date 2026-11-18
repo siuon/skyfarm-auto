@@ -24,8 +24,9 @@ const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
 const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v);
 
 test('官方版號資訊完整，設定檔版本與 version.json 一致', () => {
-  assert.match(version.version, /^\d+\.\d+(-[0-9a-f]+)?$/);
-  assert.match(version.configVersion, /^\d+\.\d+$/);
+  // 官方版號有兩段式（2.67）也有三段式（2.68.1，2026-11-18 起），後面可以接 -<雜湊>
+  assert.match(version.version, /^\d+\.\d+(\.\d+)?(-[0-9a-f]+)?$/);
+  assert.match(version.configVersion, /^\d+\.\d+(\.\d+)?$/);
   assert.equal(CFG.meta.configVersion, version.configVersion, 'game-config.json 的 meta.configVersion 要等於 version.json');
   assert.ok(isNum(CFG.meta.saveFormatVersion));
   console.log('  官方遊戲版號 ' + version.version + '（config ' + version.configVersion + '，存檔格式 ' + CFG.meta.saveFormatVersion + '）');

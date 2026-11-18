@@ -103,8 +103,9 @@ test('換行：*.js 一律 LF（雜湊穩定）、hook 也是 LF（CRLF 會讓 s
 
 test('對應的官方版號有記錄，格式正確，且有說明是在什麼條件下記下的', () => {
   const g = JSON.parse(read('test/GAME_VERSION.json'));
-  assert.match(g.version, /^\d+\.\d+(-[0-9a-f]+)?$/);
-  assert.match(g.configVersion, /^\d+\.\d+$/);
+  // 官方版號有兩段式（2.67）也有三段式（2.68.1，2026-11-18 起），後面可以接 -<雜湊>
+  assert.match(g.version, /^\d+\.\d+(\.\d+)?(-[0-9a-f]+)?$/);
+  assert.match(g.configVersion, /^\d+\.\d+(\.\d+)?$/);
   assert.ok(g.version.startsWith(g.configVersion), 'version 以 configVersion 開頭：' + g.version);
   assert.match(g.recordedAt, /^\d{4}-\d{2}-\d{2}$/);
   assert.ok(g.note && g.note.length > 10);
