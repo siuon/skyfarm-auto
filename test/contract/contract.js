@@ -48,6 +48,7 @@ module.exports = {
     { prefix: '#dock .tool[data-tool="', game: ['id="dock"', 'data-tool='] },
     { prefix: '#tray .item[data-id="', game: ['id="tray"', 'data-id='] },
     // 種子列的分頁（設施／作物／果樹／花苗／蝴蝶園）與作物分類（穀物、豆類…）：腳本要像真人一樣一步一步切到「作物 → 穀物 → 玉米」
+    { prefix: 'button[data-af2672="bath"]', game: ['data-af2672="${v}"', "b('bath', img('ui_tool_water'), L.bath,"] }, // 點髒了的寵物跳出的小選單（#pick53）裡的「梳毛」（貓）／「洗澡」（狗）
     { prefix: '#trayTabs button[data-tab="crops"]', game: ["TTAB.id = 'trayTabs'", 'data-tab="${c.id}"'] },
     { prefix: '#cgrp62 button[data-cg62="', game: ["CGB62.id = 'cgrp62'", 'data-cg62="${c.id}"'] },
     { prefix: 'button[data-oe2543="tile"]', game: ['data-oe2543="tile"'] }, // 「這一格有：」選單
@@ -66,6 +67,39 @@ module.exports = {
     { name: '除錯入口 window.__farm18（S 是 getter、act 轉呼叫最新版）', game: ['window.__farm18 = {', 'get S(){ return S; }', 'act: (x, y) => act(x, y)'] },
     { name: '除錯入口 window.__farm218（CFG、inMap）', game: ['window.__farm218'] },
     { name: '播種／照顧工具切換後要先選一個（none49）', game: ['none49', 'function noSelBlocks49'] },
+    {
+      name: '老鼠與寵物都畫在 canvas 上：遊戲每個畫面把目前這座島上可以點的東西記在 RT.critHit（世界座標）；點到老鼠 3 下（同一處）抓 1 隻；點到寵物（沒睡著）跳小選單',
+      game: [
+        "RT.critHit.push({ x: rx, y: ry - 4, r: 10, kind: 'rat', key: sp.key, i }); }",
+        "RT.critHit.push({ x: c.cx, y: c.cy - 10, r: 14, kind: 'pet', P }); }",
+        "if (best.kind === 'rat'){ const key = 'rat:' + best.key;",
+        "if (RT.ratTap.n >= (RATC.catchTaps || 3)){ RT.ratTap = null; catchRat(best.key, best.x, best.y); }",
+        "get n(){ return S.rats.barn || 0; }, set n(v){ S.rats.barn = v; }",
+        "set n(v){ s.T.rats = v; }",
+        "if (!(ag && ag.sleep)){ sfx('click'); greet2672(X); menu2672(X, best); return true; }",
+      ],
+    },
+    {
+      name: '寵物髒了：P.aff2672.dirty；小選單的「梳毛／洗澡」按下去 → act2672(X, "bath")：髒的標記清掉、好感度 +3',
+      game: [
+        "const A = X.aff2672 = X.aff2672 || { p: 0, last: 0 };",
+        "else if (what === 'bath'){ if (!A.dirty) return; A.dirty = false;",
+        "${A.dirty ? b('bath', img('ui_tool_water'), L.bath,",
+        "bath: '梳毛'",
+      ],
+    },
+    {
+      name: '腳本點動物用的兩個除錯入口：window.__farm.worldToScreen（世界座標→螢幕座標）、window.__farm222.meteorTap（只判斷點到哪隻動物，不會接著點地圖格子）',
+      game: [
+        'openUnitPanel, worldToScreen, reconcilePools',
+        'meteorTap: (x, y) => meteorTap(x, y)',
+        "if (!meteorTap(e.clientX, e.clientY)){ const tl = (useAnimal && animalHit(e.clientX, e.clientY)) || toTileAny(e.clientX, e.clientY); act(tl.x, tl.y); }",
+      ],
+    },
+    {
+      name: '垃圾站只能用收成／播種工具點開，而垃圾車在這座島時那一下會變成「倒垃圾」（所以腳本不點垃圾站去抓老鼠）',
+      game: ["if (isTrashSt(T) && (tool === 'hand' || tool === 'seed')){ if (trucksHere65(S.cur, Date.now())) handDump({ mi: S.cur, k, x, y, T }); else openTrash(S.cur, k); return; }"],
+    },
     {
       name: '種子列：所有分頁、分類的品項都一直在畫面結構裡，沒顯示的只是 hidden（所以點看不見的品項不會切分頁／分類）',
       game: [

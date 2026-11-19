@@ -29,6 +29,7 @@ function attachWorld(env, o = {}) {
     fleet: JSON.parse(JSON.stringify(o.fleet || {})), // 機器人：{ 種類: [{ id, tier, on, needPart, wear… }] }
     pets: JSON.parse(JSON.stringify(o.pets || [])), // 寵物：[{ kind: 'dog'|'cat', hungry… }]
   };
+  if (o.rats) S.rats = Object.assign({ barn: 0 }, o.rats); // 倉庫的老鼠：S.rats.barn 隻（官方 S.rats = { barn }）
   const RT = { mv: null, agents: Object.assign({}, o.agents || {}), pick53: null, lastAnimalTap: null, lastAnimalTapAt: 0 };
   let M = S.maps[S.cur]; // 目前顯示的那座島（切島時換掉）
   const edgeFence = new Set(o.edgeFence || []);
@@ -47,6 +48,7 @@ function attachWorld(env, o = {}) {
     unitPanels: 0, swaps: 0, partBuys: [], partCoinsSpent: 0,
     shopBuys: [], // 飼料商店買了什麼 [品項, 數量]
     askShown: 0, askCancelled: 0, askLog: [], // 購買確認視窗：跳出幾次、按了取消幾次、每次的標題與價格
+    ratsCaught: 0, ratTaps: [], petTaps: [], groomed: [], petStrokes: 0, taps: [], frame: 0, // 點動物：抓到幾隻老鼠、每次點到的老鼠地點／寵物、梳過的寵物、所有 meteorTap 的螢幕座標
   };
 
   // ───── 倉庫 ─────
@@ -703,8 +705,76 @@ function attachWorld(env, o = {}) {
   };
   modalClose.onclick = () => { modal.hidden = true; modalTitle.textContent = ''; clearUnitPanel(); clearShop(); tabShop.classList.remove('on'); };
 
+  // ───── 畫面上的老鼠與寵物（官方 2.68.1：每個畫面重建 RT.critHit；worldToScreen、meteorTap 是遊戲的除錯入口）─────
+  // 世界座標 → 螢幕座標故意平移一個固定量，確認腳本真的有換算（不是直接拿世界座標去點）。
+  const SCR = { dx: 13, dy: 29 };
+  const ratSpotsFake = () => { // 目前這座島上有老鼠的地方（同官方 ratSpots：倉庫、垃圾站）
+    const out = [];
+    let barn = false;
+    for (const k in M.tiles) {
+      const T = M.tiles[k];
+      if (!T || T.t !== 'building') continue;
+      if (T.id === 'barn') barn = true;
+      else if (T.id === 'trash_station' && T.rats > 0) out.push({ key: S.cur + ':' + k, get n() { return T.rats; }, set n(v) { T.rats = v; } });
+    }
+    if (barn && S.rats && S.rats.barn > 0) out.unshift({ key: 'barn', get n() { return S.rats.barn; }, set n(v) { S.rats.barn = v; } });
+    return out;
+  };
+  const denHere = (P) => P.den != null && Object.values(M.tiles).some((T) => T && T.uid === P.den);
+  RT.petAg = RT.petAg || {};
+  for (const id of o.petSleep || []) RT.petAg[id] = { sleep: true };
+  Object.defineProperty(RT, 'critHit', {
+    configurable: true, enumerable: true,
+    get() {
+      const hits = [];
+      let j = 0;
+      for (const sp of ratSpotsFake()) for (let i = 0; i < sp.n; i++) hits.push({ x: 100 + 40 * (j++) + (world.frame % 7), y: 60 + 9 * i, r: 10, kind: 'rat', key: sp.key, i }); // 老鼠一直在跑：位置每次都不一樣
+      for (const P of S.pets) if (denHere(P)) hits.push({ x: 300 + 25 * (P.id % 5), y: 90, r: 14, kind: 'pet', P });
+      return hits;
+    },
+  });
+  const meteorTap = (sx, sy) => {
+    world.taps.push([sx, sy]);
+    if (o.noMeteor) return false;
+    const tool = S.sel.tool;
+    if (['remove', 'store', 'move'].includes(tool)) return false; // 官方：這些工具不把點擊當成點動物
+    const wx = sx - SCR.dx, wy = sy - SCR.dy;
+    let best = null, bd = 1e9;
+    for (const h of RT.critHit) { const d = Math.hypot(wx - h.x, wy - h.y); if (d < h.r && d < bd) { bd = d; best = h; } }
+    world.frame += 1;
+    if (!best) return false; // 點空了：官方這時真的滑鼠點擊會接著 act(格子)；meteorTap 本身什麼都不做
+    if (best.kind === 'rat') {
+      const key = 'rat:' + best.key, now = win.performance.now();
+      RT.ratTap = RT.ratTap && RT.ratTap.key === key && now - RT.ratTap.at < 3000 ? RT.ratTap : { key, n: 0 }; // 3 秒內同一處才算連續
+      RT.ratTap.n += 1; RT.ratTap.at = now; world.ratTaps.push(best.key);
+      if (RT.ratTap.n >= 3) {
+        RT.ratTap = null;
+        const sp = ratSpotsFake().find((q) => q.key === best.key);
+        if (sp && sp.n > 0 && !o.ratBroken) { sp.n -= 1; world.ratsCaught += 1; }
+      }
+      return true;
+    }
+    if (best.kind === 'pet') {
+      const P = best.P, ag = RT.petAg[P.id];
+      if (S.sel.tool === 'animal') return false;
+      if (ag && ag.sleep) return false; // 睡著的寵物點了沒反應（官方會接著當成點地圖）
+      world.petTaps.push(P.id);
+      const A = P.aff2672 = P.aff2672 || { p: 0 };
+      const btns = [];
+      if (A.dirty && !o.noBathButton) btns.push(['button[data-af2672="bath"]', mkBtn('af2672', 'bath', () => { if (o.bathBroken) return; A.dirty = false; world.groomed.push(P.id); })]);
+      btns.push(['button[data-af2672="pet"]', mkBtn('af2672', 'pet', () => { world.petStrokes += 1; })]);
+      showPopup(btns, undefined);
+      return true;
+    }
+    return false;
+  };
+
   // ───── 掛到 window（和官方遊戲公開的除錯介面同名）─────
   win.__farm18 = { get S() { return S; }, RT, act: (x, y) => act(x, y) };
+  if (!o.noCritterApi) {
+    win.__farm = { worldToScreen: (x, y) => ({ x: x + SCR.dx, y: y + SCR.dy }) };
+    win.__farm222 = { meteorTap: (x, y) => meteorTap(x, y) };
+  }
   win.__farm218 = { CFG, inMap: () => true };
   return world;
 }

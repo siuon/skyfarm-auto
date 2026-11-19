@@ -201,6 +201,15 @@ test('設定 ui：種子列有「作物」分頁，作物分類（穀物…）�
   assert.equal(seen.get('corn'), 'grain', '玉米在「穀物」分類（使用者回報的情境）');
 });
 
+test('設定 rats：9 級起、倉庫與垃圾站各有老鼠上限、點老鼠 3 下抓 1 隻（腳本點畫面上的老鼠）', () => {
+  const R = CFG.rats;
+  assert.ok(R && isNum(R.startLevel) && R.startLevel >= 1, '老鼠從幾級開始');
+  assert.ok(R.barn && isNum(R.barn.max) && R.barn.max >= 1, '倉庫老鼠上限');
+  assert.ok(R.trash && isNum(R.trash.max) && R.trash.max >= 1, '垃圾站老鼠上限');
+  assert.equal(R.catchTaps, 3, '同一處點 3 下抓 1 隻（腳本每隻最多點 3 下）');
+  assert.ok(CFG.buildings.barn && CFG.buildings.trash_station, '農產倉庫（barn）與垃圾站（trash_station）是建築，老鼠的位置看這兩種建築格子');
+});
+
 test('設定 care.org（有機肥）：用倉庫的 organic_fert、每次種植 1 個、仍是有機作物；化肥則會讓作物失去有機身分且要花錢（腳本絕不用）', () => {
   const O = CFG.care.options.org;
   assert.ok(O, '照顧工具要有「有機肥」選項（id=org）');

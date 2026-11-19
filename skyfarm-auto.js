@@ -3,7 +3,7 @@
  *
  * 由 Tampermonkey 透過 @require 載入（設定見 skyfarm-auto.loader.user.js）。
  *
- * 功能（0.19.1）：
+ * 功能（0.20.0）：
  *   - Alt+Shift+S：跳出輸入框，輸入「這次要自動種植的作物」（中文名稱或代號皆可）
  *   - Alt+Shift+A：開啟／關閉自動功能（每次載入頁面一律預設 OFF，不會記住 ON）；
  *                  還沒設定作物就按開啟時，會先跳出輸入框，確認後才開始
@@ -68,6 +68,12 @@
  *          水稻起）的作物，用「照顧」工具的「有機肥」選項點一下（每次種植最多 1 個，產量與生長速度各 +10%，作物仍是有機作物）。
  *          只用倉庫現有的有機肥（來自堆肥桶）：沒有就不施、不會買；肥料不夠分時先給單次收成價值高的。
  *          其他種類的作物也施（fertilizeOtherCrops）。有蟲先抓蟲再施肥。絕不使用化肥、農藥（會花錢、會讓有機作物變一般作物）。
+ *      14. 老鼠與髒了的貓狗（CONFIG.autoCatchRats、autoGroomPets，預設開）：這兩樣遊戲都只能「點畫面上的牠」。
+ *          老鼠（9 級起，農產倉庫、垃圾站會跑進來；每隻每小時偷吃 1 個作物和 1 個飼料／咬破垃圾袋）：同一處點 3 下抓 1 隻。
+ *          貓、狗頭上出現「髒了」：點牠，在跳出的小選單按「梳毛」（貓）／「洗澡」（狗），好感度 +3。免費、不動倉庫。
+ *          做法：讀遊戲每個畫面記下的 RT.critHit（目前這座島上可以點的東西），用遊戲的 worldToScreen 換成螢幕座標，呼叫遊戲的 meteorTap
+ *          （只判斷點到哪隻動物，點空了不會當成點地圖）。多用兩個除錯入口：window.__farm.worldToScreen、window.__farm222.meteorTap。
+ *          全島輪流時，別座島有老鼠、髒了的貓狗也算「有事做」，會切過去。絕不點垃圾站的格子（垃圾車在時那一下會變成「倒垃圾」）。
  *       以下三項會用到你的資源，預設關閉，要用請改 CONFIG：
  *          autoWaterTrees（果樹也澆雨水）、autoFeedFish（用倉庫現有的飼料餵魚，不會自動買）、
  *          autoLoadMachines（其他機器自動投料，只投 loadMachineIds 裡的機器，成品庫存有上限；不含堆肥桶）
@@ -103,7 +109,7 @@
   'use strict';
 
   const NAME = 'SkyFarmAuto';
-  const VERSION = '0.19.1';
+  const VERSION = '0.20.0';
   const BADGE_ID = 'skyfarm-auto-badge';
   const PANEL_ID = 'skyfarm-auto-panel';
   const SETTINGS_PANEL_ID = 'skyfarm-auto-settings-panel';
@@ -148,6 +154,8 @@
     machineMaxStock: 100, // 投料前，成品在倉庫的庫存已經 ≥ 此值就不再投（避免成品把倉庫塞滿；有機肥也一樣：腳本只拿它施肥（autoFertilize）、不賣，用不完庫存到這個數堆肥桶就先停）
     autoCatchPests: true, // 作物、果樹長蟲時，用「照顧」工具的「捉蟲」（免費）點到抓光；不噴農藥、不用化肥
     catchPestsOnOtherCrops: true, // 其他種類作物與果樹長蟲也抓（蟲會往旁邊擴散；抓蟲免費，不影響收成與庫存）
+    autoCatchRats: true, // 農場（倉庫、垃圾站）有老鼠時，點畫面上的老鼠抓掉（免費；同一處點 3 下抓 1 隻）。老鼠每隻每小時偷吃 1 個作物和 1 個飼料／咬破垃圾袋
+    autoGroomPets: true, // 貓、狗髒了（下雨後、偶爾自己弄髒，頭上有「髒了」）就點牠、按小選單的「梳毛」（貓）／「洗澡」（狗）：免費、好感度 +3
     autoFertilize: true, // 還在長、生長時間 ≥ fertilizeMinMinutes 的作物，用倉庫現有的有機肥施肥（「照顧」工具的有機肥：免費、每次種植 1 個、作物仍是有機）。不用化肥、不買肥料
     fertilizeMinMinutes: 180, // 生長時間至少幾分鐘的作物才施肥。有機肥來自堆肥桶、數量有限（Lv5 一台每小時約 3 個），留給長時間、高單價的作物；預設 3 小時（水稻起）
     fertilizeOtherCrops: true, // 其他種類（不是設定作物）的作物，只要夠長也施肥
@@ -226,7 +234,7 @@
 
   const newStats = () => ({
     harvest: 0, plant: 0, water: 0, pest: 0, pick: 0, sellRuns: 0,
-    clean: 0, fruit: 0, fish: 0, machine: 0, feed: 0, honey: 0, meat: 0, parts: 0, hops: 0, petFood: 0, fert: 0,
+    clean: 0, fruit: 0, fish: 0, machine: 0, feed: 0, honey: 0, meat: 0, parts: 0, hops: 0, petFood: 0, fert: 0, rat: 0, groom: 0,
   });
   let stats = newStats();
   const wetting = new Set(); // 正在澆到目標濕度的格子（避免在門檻附近來回澆）
@@ -241,6 +249,7 @@
   let partsHint = '';
   let petFoodBlockedUntil = 0; // 補寵物飼料沒成功時，暫停到什麼時候再試
   let petFoodHint = ''; // 寫在狀態列的原因
+  let critterHint = ''; // 抓老鼠、替寵物梳毛沒成功時，寫在狀態列的原因
   // 多座島（編號都從 0 起算）
   let islandSave = null; // 目前看到的存檔物件；換存檔就重設所有島嶼狀態
   let islandCount = 0;
@@ -757,6 +766,178 @@
     const name = (partsOf(g.CFG)[buy.part] || {}).name || '';
     const label = String(buy.label || '').trim().replace(/\s+/g, ' ').slice(0, 40);
     return confirmPurchase(g, { titles: [name + ' ×1', label], price: buy.price, floor: CONFIG.minCoinsAfterBuyParts });
+  }
+
+  // ───────────────────────── 老鼠、髒了的寵物（點畫面上的牠）─────────────────────────
+  //
+  // 遊戲裡的老鼠（農產倉庫、垃圾站各自會跑進老鼠：每隻每小時偷吃倉庫 1 個作物和 1 個飼料／咬破垃圾袋）和寵物（貓、狗）都畫在 canvas 上、
+  // 一直在動，玩家是「點畫面上看得到的牠」：點老鼠，同一處點 3 下抓 1 隻；點寵物，跳出小選單，髒了（下雨後、偶爾自己弄髒）就有
+  // 「梳毛」（貓）／「洗澡」（狗）可以按，按了好感度 +3（髒的泡泡也會消失）。
+  // 倉庫視窗裡本來也有一張「抓老鼠」卡片，但 2.68.1 實測它一畫出來就被後面的程式清掉（按不到），所以不能靠它。
+  //
+  // 做法：遊戲每個畫面把目前這座島上可以點的東西記在 RT.critHit（世界座標 { x, y, r, kind, … }），玩家點擊時由 meteorTap(螢幕座標) 判斷點到誰。
+  // 腳本讀 RT.critHit → 用遊戲的 worldToScreen 換成螢幕座標 → 呼叫遊戲的 meteorTap。meteorTap 只做「點到動物」的判斷，
+  // 點空了不會當成點地圖（不像真的滑鼠點擊會接著點格子），所以不會動到田、機器、建築。
+  // 這裡多用到遊戲的兩個除錯入口：window.__farm.worldToScreen、window.__farm222.meteorTap（原本只用 __farm18、__farm218）；
+  // 找不到就什麼都不做。只對目前顯示的那座島有效（RT.critHit 只有這座島）；全島輪流時，別座島有老鼠、髒寵物也算「有事做」，會切過去。
+  //
+  // 垃圾站只當成「有老鼠的地方」讓牠們被點到；腳本絕不點垃圾站的格子（用收成工具點垃圾站，垃圾車在時會變成「倒垃圾」，會動到金幣）。
+  const CRITTER_RETRY_MS = 15000;
+  const critterCd = new Map(); // 工作代號（rat:地點／groom:寵物 id）→ { until, fails }：失敗後退避
+  const critterApi = () => {
+    const a = window.__farm;
+    const b = window.__farm222;
+    if (!a || typeof a.worldToScreen !== 'function' || !b || typeof b.meteorTap !== 'function') return null;
+    return { toScreen: (x, y) => a.worldToScreen(x, y), tap: (x, y) => b.meteorTap(x, y) };
+  };
+  const critterFree = (id) => !((critterCd.get(id) || {}).until > Date.now());
+
+  // 第 mi 座島上有老鼠的地方（只看狀態，不看畫面）。key 和遊戲的 ratSpots 相同：'barn'＝農產倉庫（S.rats.barn 隻，整個農場只有一座倉庫），
+  // 'mi:格子'＝那座垃圾站（站自己的 T.rats）
+  function ratSpotsOn(g, mi) {
+    const M = g.S.maps[mi];
+    const out = [];
+    if (!M || !M.tiles) return out;
+    let barn = false;
+    for (const k in M.tiles) {
+      const T = M.tiles[k];
+      if (!T || T.t !== 'building') continue;
+      if (T.id === 'barn') barn = true;
+      else if (T.id === 'trash_station' && Number.isFinite(T.rats) && T.rats > 0) out.push({ key: mi + ':' + k, n: Math.floor(T.rats) });
+    }
+    const nb = g.S.rats && g.S.rats.barn;
+    if (barn && Number.isFinite(nb) && nb > 0) out.unshift({ key: 'barn', n: Math.floor(nb) });
+    return out;
+  }
+  function ratCountOf(g, mi, key) {
+    if (key === 'barn') return (g.S.rats && Number(g.S.rats.barn)) || 0;
+    const k = String(key).slice(String(mi).length + 1);
+    const T = g.S.maps[mi] && g.S.maps[mi].tiles[k];
+    return (T && Number(T.rats)) || 0;
+  }
+
+  // 第 mi 座島上髒了的貓、狗（只看狀態）：牠的窩（den）在那座島。睡著的（晚上）點了沒反應，不算
+  function dirtyPetsOn(g, mi) {
+    const M = g.S.maps[mi];
+    const pets = Array.isArray(g.S.pets) ? g.S.pets : [];
+    const out = [];
+    if (!M || !M.tiles) return out;
+    for (const P of pets) {
+      if (!P || (P.kind !== 'cat' && P.kind !== 'dog') || P.den == null) continue;
+      if (!(P.aff2672 && P.aff2672.dirty === true)) continue;
+      const ag = g.RT && g.RT.petAg && g.RT.petAg[P.id];
+      if (ag && ag.sleep) continue;
+      if (Object.values(M.tiles).some((T) => T && T.uid === P.den)) out.push(P);
+    }
+    return out;
+  }
+
+  // 這座島「畫面上看得到」的工作（有狀態，而且 RT.critHit 裡真的有牠）
+  function critterJobs(g) {
+    const hits = Array.isArray(g.RT && g.RT.critHit) ? g.RT.critHit : [];
+    const jobs = [];
+    if (CONFIG.autoCatchRats) {
+      for (const sp of ratSpotsOn(g, g.S.cur)) {
+        if (critterFree('rat:' + sp.key) && hits.some((h) => h.kind === 'rat' && h.key === sp.key)) jobs.push({ id: 'rat:' + sp.key, type: 'rat', key: sp.key });
+      }
+    }
+    if (CONFIG.autoGroomPets) {
+      for (const P of dirtyPetsOn(g, g.S.cur)) {
+        if (critterFree('groom:' + P.id) && hits.some((h) => h.kind === 'pet' && h.P === P)) jobs.push({ id: 'groom:' + P.id, type: 'groom', pet: P });
+      }
+    }
+    return jobs;
+  }
+
+  // 別座島有沒有這類事做（那座島沒畫出來，只看狀態）：全島輪流時用來決定要不要切過去
+  function critterWork(g, mi) {
+    if (CONFIG.autoCatchRats && ratSpotsOn(g, mi).some((sp) => critterFree('rat:' + sp.key))) return true;
+    if (CONFIG.autoGroomPets && dirtyPetsOn(g, mi).some((P) => critterFree('groom:' + P.id))) return true;
+    return false;
+  }
+
+  // 收掉我們點寵物叫出來的小選單（遊戲按鈕按下去會自己收；沒按成時要收乾淨，否則每個週期都以為是玩家開的而暫停）
+  function closeCritterPopup(g) {
+    const pop = $('pick53');
+    if (pop && !pop.hidden) {
+      pop.hidden = true;
+      pop.textContent = '';
+    }
+    if (g.RT) g.RT.pick53 = null;
+  }
+
+  const hitScreen = (api, h) => {
+    const p = api.toScreen(h.x, h.y);
+    return p && Number.isFinite(p.x) && Number.isFinite(p.y) ? p : null;
+  };
+
+  // 點老鼠：同一處的老鼠 3 下抓 1 隻。老鼠一直在跑，所以每一下都重新讀它現在的位置（中間等一下讓畫面更新）
+  async function tapRats(g, api, job) {
+    const mi = g.S.cur;
+    const before = ratCountOf(g, mi, job.key);
+    for (let i = 0; i < 3; i++) {
+      const h = ((g.RT && g.RT.critHit) || []).find((x) => x.kind === 'rat' && x.key === job.key);
+      if (!h) break;
+      const p = hitScreen(api, h);
+      if (!p) return { ok: false, why: '算不出老鼠在畫面上的位置' };
+      api.tap(p.x, p.y);
+      if (ratCountOf(g, mi, job.key) < before) break;
+      await sleep(90);
+    }
+    const caught = before - ratCountOf(g, mi, job.key);
+    if (caught > 0) {
+      stats.rat += caught;
+      lastActionAt = Date.now();
+      log('抓了 ' + caught + ' 隻老鼠');
+      return { ok: true };
+    }
+    return { ok: false, why: '點了老鼠但沒抓到' };
+  }
+
+  // 點寵物 → 小選單（#pick53）裡的「梳毛」（貓）／「洗澡」（狗）：button[data-af2672="bath"]（髒了才有）
+  async function groomPet(g, api, job) {
+    const P = job.pet;
+    const word = P.kind === 'cat' ? '梳毛' : '洗澡';
+    const h = ((g.RT && g.RT.critHit) || []).find((x) => x.kind === 'pet' && x.P === P);
+    if (!h) return { ok: false, why: '畫面上找不到' + P.name };
+    const p = hitScreen(api, h);
+    if (!p) return { ok: false, why: '算不出' + P.name + '在畫面上的位置' };
+    try {
+      if (!api.tap(p.x, p.y)) return { ok: false, why: '點了' + P.name + '但沒有反應（睡著了？）' };
+      const btn = await waitFor(() => {
+        const pop = $('pick53');
+        return pop && !pop.hidden ? pop.querySelector('button[data-af2672="bath"]') : null;
+      }, 800);
+      if (!btn) return { ok: false, why: P.name + '的小選單裡沒有「' + word + '」按鈕' };
+      btn.click();
+      await sleep(100);
+    } finally {
+      closeCritterPopup(g);
+    }
+    if (P.aff2672 && P.aff2672.dirty === true) return { ok: false, why: '按了「' + word + '」但' + P.name + '還是髒的' };
+    stats.groom += 1;
+    lastActionAt = Date.now();
+    log('替' + P.name + word);
+    return { ok: true };
+  }
+
+  async function critterFlow(g, job) {
+    let r = { ok: false, why: '' };
+    try {
+      const api = critterApi();
+      r = api ? await (job.type === 'rat' ? tapRats(g, api, job) : groomPet(g, api, job)) : { ok: false, why: '找不到遊戲的點擊介面（__farm222）' };
+    } finally {
+      if (r.ok) {
+        critterCd.delete(job.id);
+        critterHint = '';
+      } else {
+        const c = critterCd.get(job.id) || { fails: 0, until: 0 };
+        c.fails += 1;
+        c.until = Date.now() + Math.min(300000, CRITTER_RETRY_MS * Math.pow(2, c.fails - 1));
+        critterCd.set(job.id, c);
+        critterHint = r.why || '沒成功';
+      }
+    }
   }
 
   // ───────────────────────── 寵物飼料（貓、狗）─────────────────────────
@@ -1515,6 +1696,7 @@
     if (islandHint && !dry) hints.push(islandHint); // 有多座島：說明現在在哪座、是全島輪流還是只做這座
     if (partsHint) hints.push('機器人耗材：' + partsHint);
     if (petFoodHint && !dry) hints.push('寵物飼料：' + petFoodHint);
+    if (critterHint && !dry) hints.push('老鼠／寵物：' + critterHint);
 
     // 一次只用一種工具：抓蟲要「照顧」工具、播種／收成／魚池要「播種」工具、撿東西要「收成」工具、澆水要「澆水」工具。
     // 目前的工具還有事做就繼續用，做完才換，避免每個週期都來回切換；
@@ -1857,6 +2039,7 @@
       const now = Date.now();
       work = partNeeds(g).some((nd) => !(partsBlocked.get(nd.base) > now) && baseOnIsland(g, mi, nd.base));
     }
+    if (!work && critterWork(g, mi)) work = true; // 別座島有老鼠、髒了的貓狗：也是有事做（切過去才點得到）
     return { work, needSell: !!r.needSell };
   }
 
@@ -2020,6 +2203,23 @@
       return;
     }
 
+    // 這座島上有老鼠、髒了的貓狗：點畫面上的牠（抓老鼠＝同一處點 3 下；梳毛／洗澡＝點寵物再按小選單的按鈕）。免費、不動倉庫
+    if (CONFIG.autoCatchRats || CONFIG.autoGroomPets) {
+      const cj = critterJobs(g)[0];
+      if (cj) {
+        // 玩家的工具不是我們用的四種（例如「移除」「搬移」「建造」）時，遊戲可能不把點擊當成點動物：先切到「收成」工具
+        if (!SCRIPT_TOOLS.includes(g.S.sel.tool) && !ensureToolIs(g, 'hand')) {
+          setStatus('切換工具中（點動物）…');
+          return;
+        }
+        setStatus(cj.type === 'rat' ? '抓老鼠中…' : '替' + cj.pet.name + (cj.pet.kind === 'cat' ? '梳毛' : '洗澡') + '中…');
+        await critterFlow(g, cj);
+        return;
+      }
+    } else {
+      critterHint = '';
+    }
+
     // 機器人耗材磨完了：到充電樁面板換上（有備品免費換；沒備品才在設定允許、金幣夠時買 1 個）
     if (CONFIG.autoSwapParts) {
       const job = nextPartsJob(g);
@@ -2085,6 +2285,8 @@
       islandSave = null; // 下個週期重新整理島嶼狀態：開始時看的那座就是家島
       petFoodBlockedUntil = 0;
       petFoodHint = '';
+      critterCd.clear();
+      critterHint = '';
       status = '啟動中';
       timer = setInterval(onTick, CONFIG.tickMs);
     } else {
@@ -2250,7 +2452,7 @@
         '果樹 ' + stats.fruit + '｜魚池 ' + stats.fish + '｜機器 ' + stats.machine + '｜雜物 ' + stats.clean +
           '｜餵食 ' + stats.feed
       );
-      lines.push('蜂蜜 ' + stats.honey + '｜出貨 ' + stats.meat + '｜換耗材 ' + stats.parts + '｜寵物飼料 ' + stats.petFood + '｜施肥 ' + stats.fert);
+      lines.push('蜂蜜 ' + stats.honey + '｜出貨 ' + stats.meat + '｜換耗材 ' + stats.parts + '｜寵物飼料 ' + stats.petFood + '｜施肥 ' + stats.fert + '｜抓老鼠 ' + stats.rat + '｜梳毛 ' + stats.groom);
       if (islandLine) lines.push(islandLine);
       // 上一次真的做成事的時間：數字不動、又一直很久以前，就是停住了，看下一行的原因
       lines.push(lastActionAt ? '上次動作：' + fmtSec((Date.now() - lastActionAt) / 1000) + '前' : '開啟後還沒做成任何事');
@@ -2727,6 +2929,8 @@
       bool('autoWaterTrees', '果樹也澆水', '果樹也澆雨水（會和作物搶水，預設關閉）。'),
       bool('autoCatchPests', '自動捉蟲', '作物、果樹長蟲時，用「照顧」工具的「捉蟲」（免費）點到抓光。絕不噴農藥、不用化肥（那會花錢，還會讓有機作物變一般作物）。'),
       bool('catchPestsOnOtherCrops', '其他作物與果樹長蟲也抓', '蟲會往旁邊擴散，所以其他種類的作物、果樹長蟲也一起抓（抓蟲免費，不影響收成與庫存）。'),
+      bool('autoCatchRats', '點老鼠抓掉', '農場的倉庫、垃圾站跑進老鼠時（9 級起），點畫面上的老鼠抓掉（同一處點 3 下抓 1 隻，免費）。老鼠每隻每小時偷吃 1 個作物和 1 個飼料、或咬破垃圾袋；養貓、貓頭鷹也會自動抓。只能點目前顯示的島（全島輪流會切過去）。'),
+      bool('autoGroomPets', '貓狗髒了就梳毛／洗澡', '貓、狗頭上出現「髒了」時，點牠、按小選單的「梳毛」（貓）／「洗澡」（狗），免費、好感度 +3，髒的標記就消失。同一天第一次點到牠也會順便打招呼（好感度 +2）。睡著的（晚上）點了沒反應，會等醒了再點。'),
       bool('autoFertilize', '長時間作物自動施有機肥', '還在長、生長時間夠長（見下一項）的作物，用「照顧」工具的「有機肥」施肥：每次種植 1 個、產量與生長速度各 +10%，作物仍是有機作物。只用倉庫現有的有機肥（來自堆肥桶），沒有就不施、不會去買；絕不用化肥。'),
       num('fertilizeMinMinutes', '生長時間至少幾分鐘才施肥', '有機肥數量有限（一台 Lv5 堆肥桶每小時約 3 個），留給生長時間長、單價高的作物。預設 180 分鐘（3 小時，水稻起）。肥料不夠分時，先給單次收成價值高的。', 1, 1440, '分鐘'),
       bool('fertilizeOtherCrops', '其他作物也施肥', '不是設定作物的其他作物，只要夠長也施有機肥。關閉＝只替設定的作物施肥。'),
