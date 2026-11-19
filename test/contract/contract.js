@@ -95,6 +95,17 @@ module.exports = {
       ],
     },
     {
+      name: '受傷的動物（狐狸咬的，T.hurt＝好起來的毫秒時間，停產停長）：用「收成」或「照顧」工具點牠一律只做救護（T.hurt＝0，免費，不收蛋、不餵、不出貨）；「照顧」工具點沒受傷的動物只會跳一句提示（careAt 沒有作物的田就 return）——腳本用照顧工具救護',
+      game: [
+        "if (T && T.t === 'animal' && T.hurt > Date.now() && ((PREDC.rescueTools || ['hand', 'care']).includes(tool))){",
+        "T.hurt = 0; stat('nurse'); spriteFx('fx_rescue', cx, cy - 10); floatText(cx, cy - 30, '救護好了！'",
+        "if (tool === 'care'){ careAt(M, k, T, cx, cy); afterAction(); return; }",
+        "if (!H){ toast('照顧要點有作物的田或果樹'); return; }",
+        "if (T.hurt > t || T.scared > t) return; if (T.hurt) T.hurt = 0; if (T.scared) T.scared = 0;",
+        "else if (Pd.kind === 'fox'){ T.hurt = t + (P.injureSeconds || 3600) * 1000;",
+      ],
+    },
+    {
       name: '寵物髒了：P.aff2672.dirty；小選單的「梳毛／洗澡」按下去 → act2672(X, "bath")：髒的標記清掉、好感度 +3',
       game: [
         "const A = X.aff2672 = X.aff2672 || { p: 0, last: 0 };",

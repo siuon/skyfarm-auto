@@ -61,6 +61,7 @@ function attachWorld(env, o = {}) {
     shopBuys: [], // 飼料商店買了什麼 [品項, 數量]
     askShown: 0, askCancelled: 0, askLog: [], // 購買確認視窗：跳出幾次、按了取消幾次、每次的標題與價格
     ratsCaught: 0, ratTaps: [], petTaps: [], groomed: [], petStrokes: 0, taps: [], frame: 0, // 點動物：抓到幾隻老鼠、每次點到的老鼠地點／寵物、梳過的寵物、所有 meteorTap 的螢幕座標
+    rescued: [], rescueTools: [], careOnAnimal: 0, // 救護：被救護好的格子、當時用的工具；照顧工具點到沒受傷動物的次數（官方只跳一句提示）
     predTaps: [], predHits: [], rainbowCoins: 0, // 點天敵：每一下點到哪隻（id）、得手的天敵（時間到沒被趕走）、被彩虹吃掉的點擊領到的金幣
   };
 
@@ -362,6 +363,11 @@ function attachWorld(env, o = {}) {
       const blocked = !T || T.t === 'weed' || (tool === 'seed' && T.t === 'soil' && !T.crop && !T.flower) || tool === 'care';
       if (blocked) { world.toasts.push('先從下面選一個，再點地圖'); return; }
     }
+    if (T && T.t === 'animal' && T.hurt > env.clock.now && ['hand', 'care'].includes(tool) && !o.rescueBroken) {
+      T.hurt = 0; world.rescued.push(k); world.rescueTools.push(tool);
+      return;
+    }
+    if (T && T.t === 'animal' && tool === 'care') { world.careOnAnimal += 1; world.toasts.push('照顧要點有作物的田或果樹'); return; }
     // 沿邊柵欄：用收成工具點有東西的格子，先問要動哪一個
     if (tool === 'hand' && T && !CLEAN.has(T.t) && !(T.t === 'deco' && T.id === 'fence') && edgeFence.has(k) && !world.efSkip) {
       showPopup([['button[data-oe2543="tile"]', mkBtn('oe2543', 'tile', () => { world.efSkip = true; try { actCore(x, y); } finally { world.efSkip = false; } })]], k);

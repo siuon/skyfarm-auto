@@ -223,6 +223,14 @@ test('設定 predators：三種天敵（腳本的名稱表對得上）、點 3 �
   assert.deepEqual(kinds, ['fox', 'weasel', 'wolf'], '天敵種類變了：腳本的 PRED_NAMES 要跟著改');
 });
 
+test('設定 predators.rescueTools：受傷的動物用「照顧」或「收成」工具點就救護（腳本用照顧工具，因為它點沒受傷的動物不會有任何動作）', () => {
+  const P = CFG.predators;
+  assert.ok(Array.isArray(P.rescueTools), '要有 rescueTools');
+  assert.ok(P.rescueTools.includes('care'), '照顧工具要能救護（腳本用的就是它）：' + JSON.stringify(P.rescueTools));
+  assert.ok(isNum(P.fox.injureSeconds) && P.fox.injureSeconds >= 60, '狐狸咬傷多久（秒）：' + P.fox.injureSeconds);
+  assert.ok(CFG.care && CFG.care.options && CFG.care.options.catch, '照顧工具有「捉蟲」選項（腳本救護時選的）');
+});
+
 test('設定 care.org（有機肥）：用倉庫的 organic_fert、每次種植 1 個、仍是有機作物；化肥則會讓作物失去有機身分且要花錢（腳本絕不用）', () => {
   const O = CFG.care.options.org;
   assert.ok(O, '照顧工具要有「有機肥」選項（id=org）');

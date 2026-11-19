@@ -3,7 +3,7 @@
  *
  * 由 Tampermonkey 透過 @require 載入（設定見 skyfarm-auto.loader.user.js）。
  *
- * 功能（0.21.0）：
+ * 功能（0.22.0）：
  *   - Alt+Shift+S：跳出輸入框，輸入「這次要自動種植的作物」（中文名稱或代號皆可）
  *   - Alt+Shift+A：開啟／關閉自動功能（每次載入頁面一律預設 OFF，不會記住 ON）；
  *                  還沒設定作物就按開啟時，會先跳出輸入框，確認後才開始
@@ -81,6 +81,10 @@
  *          全島輪流時，別座島出現天敵（還剩 8 秒以上）會立刻切過去趕，不等輪到；每隻天敵最多為牠切一次島，仍遵守「玩家剛切島」的保留時間與略過的島。
  *          限制：遊戲畫面要有在更新才點得到（RT.critHit 是畫面每一幀重建的）。這個分頁在背景、被最小化、螢幕鎖住時瀏覽器不畫畫面，
  *          腳本就不去點（也不為天敵切島），所以「人不在、分頁沒顯示」時不能靠它防天敵；要靠遊戲裡的狗（見 README）。
+ *      16. 救護受傷的家禽（CONFIG.autoRescueAnimals，預設開）：狐狸得手時咬傷 1 隻家禽（頭上有繃帶，停產停長 1 小時；有「救護」專長的狗會馬上救好）。
+ *          遊戲的規則：用「收成」或「照顧」工具點受傷的動物，一律只做「救護」（免費、立刻恢復），不會收蛋、不會餵、不會出貨。
+ *          腳本用「照顧」工具（捉蟲選項）點：萬一剛好自己好了，照顧工具點動物只會跳一句提示，不像收成工具會收蛋、宰肉雞。
+ *          受傷的動物不排收產物、餵食、出貨（點了只會救護）。全島輪流時，別座島有受傷的動物也算「有事做」。野狼嚇到的家畜沒有點一下就好的辦法，只能等或靠狗。
  *       以下三項會用到你的資源，預設關閉，要用請改 CONFIG：
  *          autoWaterTrees（果樹也澆雨水）、autoFeedFish（用倉庫現有的飼料餵魚，不會自動買）、
  *          autoLoadMachines（其他機器自動投料，只投 loadMachineIds 裡的機器，成品庫存有上限；不含堆肥桶）
@@ -116,7 +120,7 @@
   'use strict';
 
   const NAME = 'SkyFarmAuto';
-  const VERSION = '0.21.0';
+  const VERSION = '0.22.0';
   const BADGE_ID = 'skyfarm-auto-badge';
   const PANEL_ID = 'skyfarm-auto-panel';
   const SETTINGS_PANEL_ID = 'skyfarm-auto-settings-panel';
@@ -163,6 +167,7 @@
     catchPestsOnOtherCrops: true, // 其他種類作物與果樹長蟲也抓（蟲會往旁邊擴散；抓蟲免費，不影響收成與庫存）
     autoCatchRats: true, // 農場（倉庫、垃圾站）有老鼠時，點畫面上的老鼠抓掉（免費；同一處點 3 下抓 1 隻）。老鼠每隻每小時偷吃 1 個作物和 1 個飼料／咬破垃圾袋
     autoGroomPets: true, // 貓、狗髒了（下雨後、偶爾自己弄髒，頭上有「髒了」）就點牠、按小選單的「梳毛」（貓）／「洗澡」（狗）：免費、好感度 +3
+    autoRescueAnimals: true, // 狐狸咬傷的家禽（停產停長 1 小時）用「照顧」工具點一下救護好（免費）。受傷的動物不排收產物、餵食、出貨（點下去遊戲都只會救護）
     autoChasePredators: true, // 黃鼠狼、狐狸、野狼出現（只給 60 秒）時，點牠 3 下趕走（免費）。已經有狗在趕的不搶；遊戲畫面要有在更新（分頁在背景時點不到）
     autoFertilize: true, // 還在長、生長時間 ≥ fertilizeMinMinutes 的作物，用倉庫現有的有機肥施肥（「照顧」工具的有機肥：免費、每次種植 1 個、作物仍是有機）。不用化肥、不買肥料
     fertilizeMinMinutes: 180, // 生長時間至少幾分鐘的作物才施肥。有機肥來自堆肥桶、數量有限（Lv5 一台每小時約 3 個），留給長時間、高單價的作物；預設 3 小時（水稻起）
@@ -242,7 +247,7 @@
 
   const newStats = () => ({
     harvest: 0, plant: 0, water: 0, pest: 0, pick: 0, sellRuns: 0,
-    clean: 0, fruit: 0, fish: 0, machine: 0, feed: 0, honey: 0, meat: 0, parts: 0, hops: 0, petFood: 0, fert: 0, rat: 0, groom: 0, chase: 0,
+    clean: 0, fruit: 0, fish: 0, machine: 0, feed: 0, honey: 0, meat: 0, parts: 0, hops: 0, petFood: 0, fert: 0, rat: 0, groom: 0, chase: 0, rescue: 0,
   });
   let stats = newStats();
   const wetting = new Set(); // 正在澆到目標濕度的格子（避免在門檻附近來回澆）
@@ -445,6 +450,13 @@
     return T.cycles > 0 && !(cap > 0 && (T.stack || 0) >= cap);
   }
   const animalFeedNeed = (T, A) => (isAdultAnimal(T, A) ? A.cycleFeedQty : A.stageFeedQty);
+
+  // 受傷的動物（狐狸咬的：T.hurt 是「好起來的時間」毫秒，停產停長 1 小時）。遊戲的規則（2.68.2 真引擎實測）：
+  // 用「收成」或「照顧」工具點受傷的動物，一律只做「救護」（T.hurt＝0、免費），不會收產物、不會餵、不會出貨。
+  // 所以：① 受傷的動物不排收產物、餵食、出貨（點下去都只是救護，會被當成失敗而退避）；② 救護用「照顧」工具（捉蟲選項）點——
+  // 萬一救護沒觸發（剛好自己好了），照顧工具點動物只會跳一句提示，不會像收成工具那樣收蛋、宰肉雞。
+  const RESCUE_MIN_LEFT_MS = 1500; // 再過不到這麼久就自己好了，不用點
+  const hurtLeftMs = (T) => (T && Number.isFinite(T.hurt) ? T.hurt - Date.now() : 0);
 
   // 蜂箱（device，種類是 hive）裡存了幾罐蜂蜜。用「收成」工具點有蜂蜜的蜂箱，遊戲會把整箱收進倉庫；
   // 點到沒蜂蜜的蜂箱則會改開蜂箱面板（那是玩家自己的視窗），所以沒蜂蜜的蜂箱絕不點。
@@ -1465,6 +1477,7 @@
     const plants = [];
     const waters = [];
     const pests = [];
+    const rescues = []; // 受傷的動物（狐狸咬的）：用「照顧」工具點一下救護好（免費），和捉蟲同一個工具、同一個選項
     const fertCand = []; // 想施有機肥的作物格：[格子, 單次收成的價值]；排完才依倉庫的有機肥庫存取前幾格
     const pickups = []; // 要用「收成」工具點的有價值東西：糞便、動物產物、果樹、機器成品。[格子, 種類, 附加資料]
     const pools = []; // 魚池（用「播種」工具點才不會跳小選單）：[格子, 'pool', 魚池代號]
@@ -1610,6 +1623,11 @@
         } else {
           const A = CFG.animals[T.id];
           if (!A) continue;
+          // 受傷的動物：點牠只會救護（見 hurtLeftMs 的說明），所以不排收產物、餵食、出貨；要救護的話排進「照顧」工具的佇列
+          if (hurtLeftMs(T) > 0) {
+            if (CONFIG.autoRescueAnimals && hurtLeftMs(T) > RESCUE_MIN_LEFT_MS) rescues.push(k);
+            continue;
+          }
           // 長大了的肉用動物：出貨（點一下，1 份肉進倉庫、動物消失）。遊戲規定長大後 2 天沒收牠就會死，
           // 所以這是正常的收成；還沒長大的（要餵、不是收）不會進到這裡，由下面的餵食處理。
           if (A.type === 'meat' && isAdultAnimal(T, A)) {
@@ -1823,7 +1841,7 @@
     // 機器則一定會跳小選單（要再按「收成」）。魚池用「播種」工具直接收，用收成工具會跳小選單。
     const handQueue = pickups.concat(feeds, loads, cleanups);
     const work = {
-      care: pests.length + ferts.length > 0, // 捉蟲與施有機肥都用「照顧」工具（選項不同；有蟲先抓）
+      care: pests.length + rescues.length + ferts.length > 0, // 捉蟲、救護受傷的動物、施有機肥都用「照顧」工具（捉蟲與救護同一個選項；有蟲、有傷先處理）
       seed: harvests.length + plants.length + pools.length > 0,
       hand: handQueue.length > 0,
       water: waters.length + tilts.length > 0, // 扶正也用澆水工具
@@ -1834,7 +1852,7 @@
     const pickMode = () => (work[tool] ? tool : ['care', 'seed', 'hand', 'water'].find((m) => work[m]));
     let mode = pickMode();
     // 「照顧」工具這個週期用哪個選項：有蟲先抓（捉蟲），沒有蟲才施有機肥
-    const careOpt = pests.length > 0 ? 'catch' : 'org';
+    const careOpt = pests.length + rescues.length > 0 ? 'catch' : 'org';
     if (mode === 'care') {
       const r = prepareCareTool(g, careOpt);
       if (r === null) {
@@ -1858,7 +1876,7 @@
 
     let queue;
     if (mode === 'care') {
-      queue = careOpt === 'catch' ? pests.map((k) => [k, 'pest']) : ferts.map((k) => [k, 'fert']);
+      queue = careOpt === 'catch' ? pests.map((k) => [k, 'pest']).concat(rescues.map((k) => [k, 'rescue'])) : ferts.map((k) => [k, 'fert']);
     } else if (mode === 'water') {
       if (!ensureToolIs(g, 'water')) {
         switching('澆水');
@@ -1896,7 +1914,9 @@
 
       // 安全閘：每一種動作點下去之前，都重新確認那一格現在確實還是我們要處理的東西
       // 照顧工具一定要是「捉蟲」才點（其他選項會花錢、會讓有機作物變一般作物）
-      if (kind === 'pest' && (S.sel.tool !== 'care' || S.sel.care !== 'catch' || S.sel.none49)) break;
+      if ((kind === 'pest' || kind === 'rescue') && (S.sel.tool !== 'care' || S.sel.care !== 'catch' || S.sel.none49)) break;
+      // 救護：那格現在確實是還受著傷（至少還有 RESCUE_MIN_LEFT_MS）的動物
+      if (kind === 'rescue' && !(T0 && T0.t === 'animal' && hurtLeftMs(T0) > RESCUE_MIN_LEFT_MS)) continue;
       // 播種工具的點擊（收成、播種、魚池）：分頁一定要在「作物」——停在設施、蝴蝶園分頁時，點地圖會被遊戲當成蓋設施、種寄主植物（會花錢）；
       // 播種時，選著的種子一定是設定的作物
       if ((kind === 'harvest' || kind === 'plant' || kind === 'pool') && (S.sel.tool !== 'seed' || !seedTabOk(S.sel))) break;
@@ -1959,7 +1979,7 @@
         before.machineInput = ms.inputLeft;
       }
 
-      if ((kind === 'product' || kind === 'feed' || kind === 'meat') && animalAway(g, k)) markAnimalTap(g, k); // 動物不在家：等同玩家點了畫面上看得到的牠
+      if ((kind === 'product' || kind === 'feed' || kind === 'meat' || kind === 'rescue') && animalAway(g, k)) markAnimalTap(g, k); // 動物不在家：等同玩家點了畫面上看得到的牠
       g.act(x, y);
       done += 1;
       // 點完如果跳出小選單（機器選單、沿邊柵欄的「這一格有：」、餓了的雞的「餵食」）：處理掉，不留著卡住自己
@@ -1973,6 +1993,7 @@
       else if (kind === 'plant') ok = !!T && !!T.crop;
       else if (kind === 'pest') ok = !!T && (!H || !H.pest || (H.pestTaps || 0) > before.taps);
       else if (kind === 'fert') ok = !!H && H.fert === 'org';
+      else if (kind === 'rescue') ok = !!T && T.t === 'animal' && !(hurtLeftMs(T) > 0);
       else if (kind === 'poop') ok = !T || T.t !== 'poop';
       else if (kind === 'product') ok = !T || (T.stack || 0) < before.stack;
       else if (kind === 'honey') ok = !!T && isHive(T, CFG) && honeyStored(T) < before.honey;
@@ -2001,6 +2022,8 @@
           if (!H || !H.pest) stats.pest += 1; // 蟲抓光了才算一格（每格要點好幾下）
         } else if (kind === 'fert') {
           stats.fert += 1;
+        } else if (kind === 'rescue') {
+          stats.rescue += 1;
         } else if (kind === 'feed') {
           stats.feed += 1;
         } else if (kind === 'poop' || kind === 'product') {
@@ -2567,7 +2590,7 @@
         '果樹 ' + stats.fruit + '｜魚池 ' + stats.fish + '｜機器 ' + stats.machine + '｜雜物 ' + stats.clean +
           '｜餵食 ' + stats.feed
       );
-      lines.push('蜂蜜 ' + stats.honey + '｜出貨 ' + stats.meat + '｜換耗材 ' + stats.parts + '｜寵物飼料 ' + stats.petFood + '｜施肥 ' + stats.fert + '｜抓老鼠 ' + stats.rat + '｜梳毛 ' + stats.groom + '｜趕天敵 ' + stats.chase);
+      lines.push('蜂蜜 ' + stats.honey + '｜出貨 ' + stats.meat + '｜換耗材 ' + stats.parts + '｜寵物飼料 ' + stats.petFood + '｜施肥 ' + stats.fert + '｜抓老鼠 ' + stats.rat + '｜梳毛 ' + stats.groom + '｜趕天敵 ' + stats.chase + '｜救護 ' + stats.rescue);
       if (islandLine) lines.push(islandLine);
       // 上一次真的做成事的時間：數字不動、又一直很久以前，就是停住了，看下一行的原因
       lines.push(lastActionAt ? '上次動作：' + fmtSec((Date.now() - lastActionAt) / 1000) + '前' : '開啟後還沒做成任何事');
@@ -3045,6 +3068,7 @@
       bool('autoCatchPests', '自動捉蟲', '作物、果樹長蟲時，用「照顧」工具的「捉蟲」（免費）點到抓光。絕不噴農藥、不用化肥（那會花錢，還會讓有機作物變一般作物）。'),
       bool('catchPestsOnOtherCrops', '其他作物與果樹長蟲也抓', '蟲會往旁邊擴散，所以其他種類的作物、果樹長蟲也一起抓（抓蟲免費，不影響收成與庫存）。'),
       bool('autoCatchRats', '點老鼠抓掉', '農場的倉庫、垃圾站跑進老鼠時（9 級起），點畫面上的老鼠抓掉（同一處點 3 下抓 1 隻，免費）。老鼠每隻每小時偷吃 1 個作物和 1 個飼料、或咬破垃圾袋；養貓、貓頭鷹也會自動抓。只能點目前顯示的島（全島輪流會切過去）。'),
+      bool('autoRescueAnimals', '救護受傷的家禽', '狐狸咬傷的家禽（頭上有繃帶，停產停長 1 小時）用「照顧」工具點一下就救護好，免費。用照顧工具點，萬一剛好自己好了也只是一句提示，不會收蛋、不會宰肉雞。全島輪流時，別座島有受傷的動物也會切過去。'),
       bool('autoChasePredators', '點天敵趕走', '黃鼠狼（偷蛋）、狐狸（咬傷家禽）、野狼（嚇到家畜）出現後只給 60 秒（有「警報」專長的狗在場 3 分鐘）就動手，腳本點牠 3 下趕走，免費。已經有狗在趕的不搶。全島輪流時，別座島出現天敵會立刻切過去。注意：遊戲畫面要有在更新才點得到，分頁在背景、最小化時不會動作。'),
       bool('autoGroomPets', '貓狗髒了就梳毛／洗澡', '貓、狗頭上出現「髒了」時，點牠、按小選單的「梳毛」（貓）／「洗澡」（狗），免費、好感度 +3，髒的標記就消失。同一天第一次點到牠也會順便打招呼（好感度 +2）。睡著的（晚上）點了沒反應，會等醒了再點。'),
       bool('autoFertilize', '長時間作物自動施有機肥', '還在長、生長時間夠長（見下一項）的作物，用「照顧」工具的「有機肥」施肥：每次種植 1 個、產量與生長速度各 +10%，作物仍是有機作物。只用倉庫現有的有機肥（來自堆肥桶），沒有就不施、不會去買；絕不用化肥。'),

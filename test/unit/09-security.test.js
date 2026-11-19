@@ -82,7 +82,7 @@ test('靜態檢查：照顧工具只有兩個選項（捉蟲 catch、有機肥 o
   // 選項只認這兩個，其他一律不選
   assert.match(code, /function prepareCareTool\(g, opt\) \{\s*if \(opt !== 'catch' && opt !== 'org'\) return null;/);
   // 呼叫端只會傳 'catch' 或 'org'（careOpt 的兩種值）
-  assert.match(code, /const careOpt = pests\.length > 0 \? 'catch' : 'org';/);
+  assert.match(code, /const careOpt = pests\.length \+ rescues\.length > 0 \? 'catch' : 'org';/);
   assert.equal((code.match(/prepareCareTool\(/g) || []).length, 2, '定義一處、呼叫一處');
   // 'org' 只出現在這幾個受控的地方：選項檢查、選哪個、點之前的安全閘、ok 判斷
   const orgs = code.match(/'org'/g) || [];
@@ -114,6 +114,18 @@ test('靜態檢查：天敵只用「點」趕——腳本從不寫天敵的欄�
   assert.ok(block.includes('api.tap('), '趕天敵用 meteorTap（api.tap）點');
   assert.doesNotMatch(block, /\.act\(/, '趕天敵的程式不用 act（act 會點地圖格子）');
   assert.doesNotMatch(block, /\.click\(/, '趕天敵的程式不按任何按鈕');
+});
+
+test('靜態檢查：救護受傷的動物只用「照顧」工具的捉蟲選項點（不用收成工具：收成工具點動物會收蛋、餵食、宰肉雞），點之前再確認那格還在受傷', () => {
+  // 工具與選項的閘（和捉蟲同一個）
+  assert.match(code, /\(kind === 'pest' \|\| kind === 'rescue'\) && \(S\.sel\.tool !== 'care' \|\| S\.sel\.care !== 'catch' \|\| S\.sel\.none49\)\) break;/);
+  // 點之前重新確認：那格現在是動物、而且還受著傷（至少還有 RESCUE_MIN_LEFT_MS）
+  assert.match(code, /if \(kind === 'rescue' && !\(T0 && T0\.t === 'animal' && hurtLeftMs\(T0\) > RESCUE_MIN_LEFT_MS\)\) continue;/);
+  // 救護只排在照顧工具的捉蟲佇列裡，不會進收成工具的佇列
+  assert.match(code, /queue = careOpt === 'catch' \? pests\.map\(\(k\) => \[k, 'pest'\]\)\.concat\(rescues\.map\(\(k\) => \[k, 'rescue'\]\)\)/);
+  assert.doesNotMatch(code, /handQueue = [^;]*rescues/, '救護不能進收成工具的佇列');
+  // 腳本不寫動物的 hurt 欄位（只有遊戲自己改）
+  assert.doesNotMatch(code, /\.hurt\s*(=(?!=)|\+\+|\+=)/, '腳本不能自己改動物的 hurt');
 });
 
 test('不在頁面上留下東西：window 只多一個「已載入」旗標，沒有任何物件或函式', () => {
