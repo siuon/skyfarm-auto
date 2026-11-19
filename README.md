@@ -14,7 +14,7 @@
 
 ## 對應的官方遊戲版號
 
-測試對應的官方版號記錄在 [`test/GAME_VERSION.json`](test/GAME_VERSION.json)（目前：**2.68.2-8f28d1af0d**）。
+測試對應的官方版號記錄在 [`test/GAME_VERSION.json`](test/GAME_VERSION.json)（目前：**2.68.2-3c61685ef9**）。
 它只會在「契約測試對該版號的官方檔案全部通過」之後才更新（`npm run record-version`）。
 
 ## 測試
