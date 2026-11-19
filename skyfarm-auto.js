@@ -3,7 +3,7 @@
  *
  * 由 Tampermonkey 透過 @require 載入（設定見 skyfarm-auto.loader.user.js）。
  *
- * 功能（0.22.0）：
+ * 功能（0.23.0）：
  *   - Alt+Shift+S：跳出輸入框，輸入「這次要自動種植的作物」（中文名稱或代號皆可）
  *   - Alt+Shift+A：開啟／關閉自動功能（每次載入頁面一律預設 OFF，不會記住 ON）；
  *                  還沒設定作物就按開啟時，會先跳出輸入框，確認後才開始
@@ -70,7 +70,9 @@
  *          其他種類的作物也施（fertilizeOtherCrops）。有蟲先抓蟲再施肥。絕不使用化肥、農藥（會花錢、會讓有機作物變一般作物）。
  *      14. 老鼠與髒了的貓狗（CONFIG.autoCatchRats、autoGroomPets，預設開）：這兩樣遊戲都只能「點畫面上的牠」。
  *          老鼠（9 級起，農產倉庫、垃圾站會跑進來；每隻每小時偷吃 1 個作物和 1 個飼料／咬破垃圾袋）：同一處點 3 下抓 1 隻。
- *          貓、狗頭上出現「髒了」：點牠，在跳出的小選單按「梳毛」（貓）／「洗澡」（狗），好感度 +3。免費、不動倉庫。
+ *          貓、狗、寵物鳥頭上出現「髒了」：點牠，在跳出的小選單按「梳毛」（貓）／「洗澡」（狗）／「洗羽毛」（鳥），好感度 +3。免費、不動倉庫。
+ *          寵物鳥（S.birds40）只有白天、沒下雨下雪才飛出鳥屋（畫面上才點得到）；在鳥屋裡時腳本讀不到天氣與時間，所以點不到就隔 2 分鐘再看，
+ *          別座島有髒鳥也先當成有事做、切過去看（鳥不在外面就退避）。
  *          做法：讀遊戲每個畫面記下的 RT.critHit（目前這座島上可以點的東西），用遊戲的 worldToScreen 換成螢幕座標，呼叫遊戲的 meteorTap
  *          （只判斷點到哪隻動物，點空了不會當成點地圖）。多用兩個除錯入口：window.__farm.worldToScreen、window.__farm222.meteorTap。
  *          全島輪流時，別座島有老鼠、髒了的貓狗也算「有事做」，會切過去。絕不點垃圾站的格子（垃圾車在時那一下會變成「倒垃圾」）。
@@ -120,7 +122,7 @@
   'use strict';
 
   const NAME = 'SkyFarmAuto';
-  const VERSION = '0.22.0';
+  const VERSION = '0.23.0';
   const BADGE_ID = 'skyfarm-auto-badge';
   const PANEL_ID = 'skyfarm-auto-panel';
   const SETTINGS_PANEL_ID = 'skyfarm-auto-settings-panel';
@@ -836,10 +838,21 @@
     return (T && Number(T.rats)) || 0;
   }
 
-  // 第 mi 座島上髒了的貓、狗（只看狀態）：牠的窩（den）在那座島。睡著的（晚上）點了沒反應，不算
+  // 寵物鳥（S.birds40）和貓狗一樣有好感度（B.aff2672），也會「髒了」（一天 15% 自己弄髒；下雨只會弄髒狗），點牠 → 小選單 →「洗羽毛」。
+  // 沒有 kind 欄位的就是鳥（遊戲的 kindOf2672：不是狗、不是貓就是鳥）。
+  const isBirdPal = (X) => X.kind !== 'cat' && X.kind !== 'dog';
+  const groomId = (X) => 'groom:' + (isBirdPal(X) ? 'bird:' : '') + X.id;
+  const groomWord = (X) => (isBirdPal(X) ? '洗羽毛' : X.kind === 'cat' ? '梳毛' : '洗澡');
+  const BIRD_HIDDEN_RETRY_MS = 120000; // 鳥還在鳥屋裡（晚上、下雨下雪、餓了）：過這麼久再來看（別座島有髒鳥時才不會一直切過來白跑）
+
+  // 第 mi 座島上髒了的貓、狗、寵物鳥（只看狀態）。
+  // 貓狗：牠的窩（den）在那座島；睡著的（晚上）點了沒反應，不算。
+  // 寵物鳥：鳥屋（B.house＝鳥屋那格的 uid）在那座島、不餓著；鳥只有白天、沒下雨下雪才飛出來（畫面上才點得到），
+  // 這腳本讀不到天氣與時間，所以別座島的髒鳥只能先當成「有事做」，切過去發現牠還在鳥屋裡就退避（見 critterJobs）。
   function dirtyPetsOn(g, mi) {
     const M = g.S.maps[mi];
     const pets = Array.isArray(g.S.pets) ? g.S.pets : [];
+    const birds = Array.isArray(g.S.birds40) ? g.S.birds40 : [];
     const out = [];
     if (!M || !M.tiles) return out;
     for (const P of pets) {
@@ -848,6 +861,11 @@
       const ag = g.RT && g.RT.petAg && g.RT.petAg[P.id];
       if (ag && ag.sleep) continue;
       if (Object.values(M.tiles).some((T) => T && T.uid === P.den)) out.push(P);
+    }
+    for (const B of birds) {
+      if (!B || B.id == null || B.house == null || B.hungry) continue;
+      if (!(B.aff2672 && B.aff2672.dirty === true)) continue;
+      if (Object.values(M.tiles).some((T) => T && T.t === 'deco' && T.id === 'bird_house' && T.uid === B.house)) out.push(B);
     }
     return out;
   }
@@ -950,7 +968,10 @@
     }
     if (CONFIG.autoGroomPets) {
       for (const P of dirtyPetsOn(g, g.S.cur)) {
-        if (critterFree('groom:' + P.id) && hits.some((h) => h.kind === 'pet' && h.P === P)) jobs.push({ id: 'groom:' + P.id, type: 'groom', pet: P });
+        if (!critterFree(groomId(P))) continue;
+        const bird = isBirdPal(P);
+        if (hits.some((h) => (bird ? h.kind === 'bird2543' && h.B === P : h.kind === 'pet' && h.P === P))) jobs.push({ id: groomId(P), type: 'groom', pet: P });
+        else if (bird && !tabHidden()) critterCd.set(groomId(P), { fails: 0, until: Date.now() + BIRD_HIDDEN_RETRY_MS }); // 鳥還在鳥屋裡：過一陣子再看（畫面沒更新時不算）
       }
     }
     return jobs;
@@ -960,7 +981,7 @@
   function critterWork(g, mi) {
     if (CONFIG.autoChasePredators && !tabHidden() && predsOn(g, mi, PRED_HOP_MIN_LEFT_MS).some(predFree)) return true;
     if (CONFIG.autoCatchRats && ratSpotsOn(g, mi).some((sp) => critterFree('rat:' + sp.key))) return true;
-    if (CONFIG.autoGroomPets && dirtyPetsOn(g, mi).some((P) => critterFree('groom:' + P.id))) return true;
+    if (CONFIG.autoGroomPets && dirtyPetsOn(g, mi).some((P) => critterFree(groomId(P)))) return true;
     return false;
   }
 
@@ -1002,11 +1023,12 @@
     return { ok: false, why: '點了老鼠但沒抓到' };
   }
 
-  // 點寵物 → 小選單（#pick53）裡的「梳毛」（貓）／「洗澡」（狗）：button[data-af2672="bath"]（髒了才有）
+  // 點寵物 → 小選單（#pick53）裡的「梳毛」（貓）／「洗澡」（狗）／「洗羽毛」（鳥）：button[data-af2672="bath"]（髒了才有）
   async function groomPet(g, api, job) {
     const P = job.pet;
-    const word = P.kind === 'cat' ? '梳毛' : '洗澡';
-    const h = ((g.RT && g.RT.critHit) || []).find((x) => x.kind === 'pet' && x.P === P);
+    const bird = isBirdPal(P);
+    const word = groomWord(P);
+    const h = ((g.RT && g.RT.critHit) || []).find((x) => (bird ? x.kind === 'bird2543' && x.B === P : x.kind === 'pet' && x.P === P));
     if (!h) return { ok: false, why: '畫面上找不到' + P.name };
     const p = hitScreen(api, h);
     if (!p) return { ok: false, why: '算不出' + P.name + '在畫面上的位置' };
@@ -1061,7 +1083,7 @@
       setStatus('切換工具中（點動物）…');
       return true;
     }
-    setStatus(cj.type === 'pred' ? '趕' + PRED_NAMES[cj.pred.kind] + '中…' : cj.type === 'rat' ? '抓老鼠中…' : '替' + cj.pet.name + (cj.pet.kind === 'cat' ? '梳毛' : '洗澡') + '中…');
+    setStatus(cj.type === 'pred' ? '趕' + PRED_NAMES[cj.pred.kind] + '中…' : cj.type === 'rat' ? '抓老鼠中…' : '替' + cj.pet.name + groomWord(cj.pet) + '中…');
     await critterFlow(g, cj);
     return true;
   }
@@ -3070,7 +3092,7 @@
       bool('autoCatchRats', '點老鼠抓掉', '農場的倉庫、垃圾站跑進老鼠時（9 級起），點畫面上的老鼠抓掉（同一處點 3 下抓 1 隻，免費）。老鼠每隻每小時偷吃 1 個作物和 1 個飼料、或咬破垃圾袋；養貓、貓頭鷹也會自動抓。只能點目前顯示的島（全島輪流會切過去）。'),
       bool('autoRescueAnimals', '救護受傷的家禽', '狐狸咬傷的家禽（頭上有繃帶，停產停長 1 小時）用「照顧」工具點一下就救護好，免費。用照顧工具點，萬一剛好自己好了也只是一句提示，不會收蛋、不會宰肉雞。全島輪流時，別座島有受傷的動物也會切過去。'),
       bool('autoChasePredators', '點天敵趕走', '黃鼠狼（偷蛋）、狐狸（咬傷家禽）、野狼（嚇到家畜）出現後只給 60 秒（有「警報」專長的狗在場 3 分鐘）就動手，腳本點牠 3 下趕走，免費。已經有狗在趕的不搶。全島輪流時，別座島出現天敵會立刻切過去。注意：遊戲畫面要有在更新才點得到，分頁在背景、最小化時不會動作。'),
-      bool('autoGroomPets', '貓狗髒了就梳毛／洗澡', '貓、狗頭上出現「髒了」時，點牠、按小選單的「梳毛」（貓）／「洗澡」（狗），免費、好感度 +3，髒的標記就消失。同一天第一次點到牠也會順便打招呼（好感度 +2）。睡著的（晚上）點了沒反應，會等醒了再點。'),
+      bool('autoGroomPets', '貓狗鳥髒了就梳毛／洗澡', '貓、狗、寵物鳥頭上出現「髒了」時，點牠、按小選單的「梳毛」（貓）／「洗澡」（狗）／「洗羽毛」（鳥），免費、好感度 +3，髒的標記就消失。同一天第一次點到牠也會順便打招呼（好感度 +2）。睡著的（晚上）點了沒反應，會等醒了再點；鳥只有白天沒下雨下雪才飛出鳥屋，在鳥屋裡時點不到，會隔一陣子再看。'),
       bool('autoFertilize', '長時間作物自動施有機肥', '還在長、生長時間夠長（見下一項）的作物，用「照顧」工具的「有機肥」施肥：每次種植 1 個、產量與生長速度各 +10%，作物仍是有機作物。只用倉庫現有的有機肥（來自堆肥桶），沒有就不施、不會去買；絕不用化肥。'),
       num('fertilizeMinMinutes', '生長時間至少幾分鐘才施肥', '有機肥數量有限（一台 Lv5 堆肥桶每小時約 3 個），留給生長時間長、單價高的作物。預設 180 分鐘（3 小時，水稻起）。肥料不夠分時，先給單次收成價值高的。', 1, 1440, '分鐘'),
       bool('fertilizeOtherCrops', '其他作物也施肥', '不是設定作物的其他作物，只要夠長也施有機肥。關閉＝只替設定的作物施肥。'),

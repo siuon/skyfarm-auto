@@ -95,6 +95,22 @@ module.exports = {
       ],
     },
     {
+      name: '寵物鳥（S.birds40，每隻 { house＝鳥屋那格的 uid, hungry?, aff2672 }）也會髒、也能洗：沒有 kind 欄位的就是鳥（kindOf2672）；一天 15% 自己弄髒；點到飛在外面的鳥（RT.critHit 的 kind "bird2543"，半徑 13）跳小選單，髒了才有「洗羽毛」；只有鳥屋在目前這座島、不餓、白天沒下雨下雪才飛出來（畫面上才點得到）',
+      game: [
+        "RT.critHit.push({ x: c.cx + (A.mode === 'fly' ? 0 : (B.born % 3 - 1) * 6), y: c.cy - lift - 4, r: 13, kind: 'bird2543', B }); } } catch(e){}",
+        "const X = best && (best.kind === 'pet' ? best.P : best.kind === 'bird2543' ? best.B : null);",
+        "const kindOf2672 = X => X && X.kind === 'dog' ? 'dog' : X && X.kind === 'cat' ? 'cat' : 'bird';",
+        "bird: { pet: '輕撫羽毛', play: '吹口哨', bath: '洗羽毛'",
+        "function allPals2672(){ return [...(S.pets || []), ...(S.birds40 || [])].filter(Boolean); }",
+        "if (A.dd !== t){ A.dd = t; if (Math.random() < AFF.dirtyPerDay) A.dirty = true; }",
+        "${A.dirty ? b('bath', img('ui_tool_water'), L.bath,",
+        "function birdOut40(B, t){ if (B.hungry) return false; if (farmRain(t) || farmSnow(t)) return false;",
+        "for (const B of L){ const rg = birdRange40(B); if (!rg || rg.mi !== S.cur){ delete RT.bAg40[B.id]; continue; }",
+        "const isBirdHouse40 = T => !!T && T.t === 'deco' && T.id === 'bird_house';",
+        "house: h.T.uid, born: Date.now()",
+      ],
+    },
+    {
       name: '受傷的動物（狐狸咬的，T.hurt＝好起來的毫秒時間，停產停長）：用「收成」或「照顧」工具點牠一律只做救護（T.hurt＝0，免費，不收蛋、不餵、不出貨）；「照顧」工具點沒受傷的動物只會跳一句提示（careAt 沒有作物的田就 return）——腳本用照顧工具救護',
       game: [
         "if (T && T.t === 'animal' && T.hurt > Date.now() && ((PREDC.rescueTools || ['hand', 'care']).includes(tool))){",

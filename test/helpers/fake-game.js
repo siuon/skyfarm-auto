@@ -29,6 +29,7 @@ function attachWorld(env, o = {}) {
     fleet: JSON.parse(JSON.stringify(o.fleet || {})), // 機器人：{ 種類: [{ id, tier, on, needPart, wear… }] }
     pets: JSON.parse(JSON.stringify(o.pets || [])), // 寵物：[{ kind: 'dog'|'cat', hungry… }]
   };
+  if (o.birds) S.birds40 = JSON.parse(JSON.stringify(o.birds)); // 寵物鳥；沒有 kind 欄位（遊戲的 kindOf2672：不是狗、不是貓就是鳥）
   if (o.rats) S.rats = Object.assign({ barn: 0 }, o.rats); // 倉庫的老鼠：S.rats.barn 隻（官方 S.rats = { barn }）
   // 天敵（官方 S.preds）：{ id, kind, mi, k（牠要打的動物的格子）, t0, until（動手的時間，毫秒）, taps, fleeAt, by, done }。
   // 測試用 untilIn（從現在起還有幾毫秒動手；官方是 60 秒，有警報狗 180 秒）；by／fleeAt（相對現在的毫秒 fleeAtIn）＝狗已經在趕
@@ -195,6 +196,7 @@ function attachWorld(env, o = {}) {
     rebuildSeedTray();
   }
   world.rebuildSeedTray = rebuildSeedTray;
+  world.setBirdsIn = (v) => { o.birdsIn = v; }; // 測試用：鳥回鳥屋（晚上、下雨下雪）／飛出來
   addTray('catch', () => { S.sel.care = 'catch'; });
   addTray('org', () => { S.sel.care = 'org'; });
   addTray('chem', () => { S.sel.care = 'chem'; }); // 腳本絕不該選這兩個：點下去會記成 chemUsed
@@ -765,7 +767,11 @@ function attachWorld(env, o = {}) {
         hits.push({ x: 200 + 40 * (j++) + (world.frame % 5), y: 150, r: 16, kind: 'pred', Pd });
       }
       for (const sp of ratSpotsFake()) for (let i = 0; i < sp.n; i++) hits.push({ x: 100 + 40 * (j++) + (world.frame % 7), y: 60 + 9 * i, r: 10, kind: 'rat', key: sp.key, i }); // 老鼠一直在跑：位置每次都不一樣
-      for (const P of S.pets) if (denHere(P)) hits.push({ x: 300 + 25 * (P.id % 5), y: 90, r: 14, kind: 'pet', P });
+      if (!o.birdsIn) for (const B of S.birds40 || []) { // o.birdsIn＝晚上／下雨下雪：鳥都待在鳥屋裡，畫面上沒有鳥
+        if (B.hungry || !Object.values(M.tiles).some((T) => T && T.t === 'deco' && T.id === 'bird_house' && T.uid === B.house)) continue;
+        hits.push({ x: 500 + 25 * (hits.length % 4), y: 140, r: 13, kind: 'bird2543', B });
+      }
+      for (const P of S.pets) if (denHere(P)) hits.push({ x: 300 + 25 * ((Number(P.id) || 0) % 5), y: 90, r: 14, kind: 'pet', P });
       return hits;
     },
   });
@@ -800,8 +806,8 @@ function attachWorld(env, o = {}) {
       }
       return true;
     }
-    if (best.kind === 'pet') {
-      const P = best.P, ag = RT.petAg[P.id];
+    if (best.kind === 'pet' || best.kind === 'bird2543') {
+      const P = best.P || best.B, ag = best.kind === 'pet' ? RT.petAg[P.id] : null;
       if (S.sel.tool === 'animal') return false;
       if (ag && ag.sleep) return false; // 睡著的寵物點了沒反應（官方會接著當成點地圖）
       world.petTaps.push(P.id);
