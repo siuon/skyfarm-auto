@@ -3,7 +3,7 @@
  *
  * 由 Tampermonkey 透過 @require 載入（設定見 skyfarm-auto.loader.user.js）。
  *
- * 功能（0.20.0）：
+ * 功能（0.21.0）：
  *   - Alt+Shift+S：跳出輸入框，輸入「這次要自動種植的作物」（中文名稱或代號皆可）
  *   - Alt+Shift+A：開啟／關閉自動功能（每次載入頁面一律預設 OFF，不會記住 ON）；
  *                  還沒設定作物就按開啟時，會先跳出輸入框，確認後才開始
@@ -74,6 +74,13 @@
  *          做法：讀遊戲每個畫面記下的 RT.critHit（目前這座島上可以點的東西），用遊戲的 worldToScreen 換成螢幕座標，呼叫遊戲的 meteorTap
  *          （只判斷點到哪隻動物，點空了不會當成點地圖）。多用兩個除錯入口：window.__farm.worldToScreen、window.__farm222.meteorTap。
  *          全島輪流時，別座島有老鼠、髒了的貓狗也算「有事做」，會切過去。絕不點垃圾站的格子（垃圾車在時那一下會變成「倒垃圾」）。
+ *      15. 天敵（CONFIG.autoChasePredators，預設開）：晚上（野狼也會在雨天）黃鼠狼（偷蛋）、狐狸（咬傷家禽）、野狼（嚇到家畜）會走向某隻動物，
+ *          出現後只給 60 秒（有「警報」專長的狗在場是 3 分鐘）就動手，玩家要在那之前「點牠 3 下」趕走。柵欄擋不住牠們。
+ *          腳本照老鼠的做法點牠 3 下（RT.critHit 裡 kind='pred' 的那一筆，同樣用 worldToScreen＋meteorTap）。比賣出、收成都急，所以排在最前面。
+ *          只處理「還沒有狗在趕」的天敵（狗在趕的話牠幾秒內自己會走，腳本不搶功，狗的「趕走天敵」戰績和警犬效果才不會被蓋掉）。
+ *          全島輪流時，別座島出現天敵（還剩 8 秒以上）會立刻切過去趕，不等輪到；每隻天敵最多為牠切一次島，仍遵守「玩家剛切島」的保留時間與略過的島。
+ *          限制：遊戲畫面要有在更新才點得到（RT.critHit 是畫面每一幀重建的）。這個分頁在背景、被最小化、螢幕鎖住時瀏覽器不畫畫面，
+ *          腳本就不去點（也不為天敵切島），所以「人不在、分頁沒顯示」時不能靠它防天敵；要靠遊戲裡的狗（見 README）。
  *       以下三項會用到你的資源，預設關閉，要用請改 CONFIG：
  *          autoWaterTrees（果樹也澆雨水）、autoFeedFish（用倉庫現有的飼料餵魚，不會自動買）、
  *          autoLoadMachines（其他機器自動投料，只投 loadMachineIds 裡的機器，成品庫存有上限；不含堆肥桶）
@@ -109,7 +116,7 @@
   'use strict';
 
   const NAME = 'SkyFarmAuto';
-  const VERSION = '0.20.0';
+  const VERSION = '0.21.0';
   const BADGE_ID = 'skyfarm-auto-badge';
   const PANEL_ID = 'skyfarm-auto-panel';
   const SETTINGS_PANEL_ID = 'skyfarm-auto-settings-panel';
@@ -156,6 +163,7 @@
     catchPestsOnOtherCrops: true, // 其他種類作物與果樹長蟲也抓（蟲會往旁邊擴散；抓蟲免費，不影響收成與庫存）
     autoCatchRats: true, // 農場（倉庫、垃圾站）有老鼠時，點畫面上的老鼠抓掉（免費；同一處點 3 下抓 1 隻）。老鼠每隻每小時偷吃 1 個作物和 1 個飼料／咬破垃圾袋
     autoGroomPets: true, // 貓、狗髒了（下雨後、偶爾自己弄髒，頭上有「髒了」）就點牠、按小選單的「梳毛」（貓）／「洗澡」（狗）：免費、好感度 +3
+    autoChasePredators: true, // 黃鼠狼、狐狸、野狼出現（只給 60 秒）時，點牠 3 下趕走（免費）。已經有狗在趕的不搶；遊戲畫面要有在更新（分頁在背景時點不到）
     autoFertilize: true, // 還在長、生長時間 ≥ fertilizeMinMinutes 的作物，用倉庫現有的有機肥施肥（「照顧」工具的有機肥：免費、每次種植 1 個、作物仍是有機）。不用化肥、不買肥料
     fertilizeMinMinutes: 180, // 生長時間至少幾分鐘的作物才施肥。有機肥來自堆肥桶、數量有限（Lv5 一台每小時約 3 個），留給長時間、高單價的作物；預設 3 小時（水稻起）
     fertilizeOtherCrops: true, // 其他種類（不是設定作物）的作物，只要夠長也施肥
@@ -234,7 +242,7 @@
 
   const newStats = () => ({
     harvest: 0, plant: 0, water: 0, pest: 0, pick: 0, sellRuns: 0,
-    clean: 0, fruit: 0, fish: 0, machine: 0, feed: 0, honey: 0, meat: 0, parts: 0, hops: 0, petFood: 0, fert: 0, rat: 0, groom: 0,
+    clean: 0, fruit: 0, fish: 0, machine: 0, feed: 0, honey: 0, meat: 0, parts: 0, hops: 0, petFood: 0, fert: 0, rat: 0, groom: 0, chase: 0,
   });
   let stats = newStats();
   const wetting = new Set(); // 正在澆到目標濕度的格子（避免在門檻附近來回澆）
@@ -832,10 +840,97 @@
     return out;
   }
 
-  // 這座島「畫面上看得到」的工作（有狀態，而且 RT.critHit 裡真的有牠）
+  // ── 天敵（黃鼠狼、狐狸、野狼）──
+  // 遊戲的天敵在 S.preds（{ id, kind, mi, k（牠要打的那隻動物的格子）, until（動手的時間，毫秒）, taps, fleeAt, by, done }），
+  // 出現後走向那隻動物，until 到了還沒被趕走就得手。點牠 3 下（chaseTaps）→ 遊戲設 fleeAt、by='player'。
+  // 柵欄擋不住牠們，所以不用管圍欄。已經有狗在趕的（Pd.fleeAt／Pd.by 已設）不點：點了會把「by」蓋成玩家，狗的戰績和警犬效果就沒了。
+  const PRED_NAMES = { weasel: '黃鼠狼', fox: '狐狸', wolf: '野狼' };
+  const PRED_RETRY_MS = 1500; // 天敵只給 60 秒：失敗後很快再試（老鼠那種 15 秒起跳的退避會錯過）
+  const PRED_RETRY_MAX_MS = 15000;
+  const PRED_HOP_MIN_LEFT_MS = 8000; // 別座島的天敵剩下不到這麼久，切過去也來不及（切島＋等畫面更新＋點 3 下），不去
+  const predHopped = new Set(); // 已經為了牠切過島的天敵 id：每隻最多切一次（切過去點不到也不再為牠來回跳）
+  // 畫面沒在更新（分頁在背景、最小化、螢幕鎖住）：RT.critHit 是上一幀留下的舊資料，點了可能點歪、新出現的天敵根本不在裡面
+  const tabHidden = () => document.hidden === true;
+
+  // 第 mi 座島上「現在可以去點」的天敵（只看狀態）：還沒被趕走／得手、沒有狗在趕、還有 minLeftMs 以上、牠要打的動物還在
+  function predsOn(g, mi, minLeftMs) {
+    const list = Array.isArray(g.S.preds) ? g.S.preds : [];
+    const M = g.S.maps[mi];
+    const now = Date.now();
+    const out = [];
+    if (!M || !M.tiles) return out;
+    for (const Pd of list) {
+      if (!Pd || typeof Pd !== 'object' || Pd.id == null || !PRED_NAMES[Pd.kind]) continue;
+      if (Pd.done || Pd.fleeAt || Pd.by || Pd.mi !== mi) continue;
+      if (!Number.isFinite(Pd.until) || !(Pd.until - now > (minLeftMs || 0))) continue;
+      const T = M.tiles[Pd.k];
+      if (!T || T.t !== 'animal') continue;
+      out.push(Pd);
+    }
+    return out.sort((a, b) => a.until - b.until); // 最快動手的先
+  }
+  const predFree = (Pd) => critterFree('pred:' + Pd.id);
+
+  // 別座島有天敵、要立刻切過去趕的（最快動手的那隻）：{ mi, Pd } 或 null
+  function urgentPred(g) {
+    if (!CONFIG.autoChasePredators || tabHidden()) return null;
+    let best = null;
+    for (let mi = 0; mi < g.S.maps.length; mi++) {
+      if (mi === g.S.cur || CONFIG.skipIslands.includes(mi + 1) || !islandReady(mi)) continue;
+      for (const Pd of predsOn(g, mi, PRED_HOP_MIN_LEFT_MS)) {
+        if (predHopped.has(Pd.id) || !predFree(Pd)) continue;
+        if (!best || Pd.until < best.Pd.until) best = { mi, Pd };
+      }
+    }
+    return best;
+  }
+
+  // 已經不在 S.preds 裡的天敵（被趕走、得手、過期）：清掉牠的退避記錄和「切過島」記錄
+  function prunePreds(g) {
+    const live = new Set((Array.isArray(g.S.preds) ? g.S.preds : []).map((p) => p && p.id));
+    for (const id of [...predHopped]) if (!live.has(id)) predHopped.delete(id);
+    for (const key of [...critterCd.keys()]) if (key.startsWith('pred:') && !live.has(key.slice(5))) critterCd.delete(key);
+  }
+
+  // 點天敵 chaseTaps（3）下。不像老鼠有 3 秒的連點限制（Pd.taps 記在天敵身上），所以一次讀位置、連點完；天敵一秒才走幾個像素。
+  // meteorTap 對任何「點到的東西」都回 true，所以每一下都看 Pd.taps 有沒有真的增加（先點到彩虹只領金幣、不算趕天敵）
+  async function tapPred(g, api, job) {
+    const Pd = job.pred;
+    const name = PRED_NAMES[Pd.kind];
+    const cfg = g.CFG && g.CFG.predators;
+    const need = Math.min(10, Math.max(1, Math.floor(Number(cfg && cfg.chaseTaps)) || 3));
+    try {
+      const h = ((g.RT && g.RT.critHit) || []).find((x) => x.kind === 'pred' && x.Pd === Pd);
+      if (!h) return { ok: false, why: '畫面上找不到' + name };
+      const p = hitScreen(api, h);
+      if (!p) return { ok: false, why: '算不出' + name + '在畫面上的位置' };
+      let misses = 0;
+      for (let i = 0; i < need + 3 && !Pd.fleeAt && !Pd.done && misses < 2; i++) {
+        const before = Number(Pd.taps) || 0;
+        api.tap(p.x, p.y);
+        if ((Number(Pd.taps) || 0) > before || Pd.fleeAt) misses = 0;
+        else misses += 1;
+      }
+    } finally {
+      closeCritterPopup(g); // 萬一點到的是旁邊的寵物，遊戲會跳寵物小選單：收乾淨
+    }
+    if (!(Pd.fleeAt && Pd.by === 'player')) return { ok: false, why: '點了' + name + '但沒趕走' };
+    stats.chase += 1;
+    lastActionAt = Date.now();
+    log('趕走了' + name);
+    return { ok: true };
+  }
+
+  // 這座島「畫面上看得到」的工作（有狀態，而且 RT.critHit 裡真的有牠）。天敵最急，排最前面
   function critterJobs(g) {
     const hits = Array.isArray(g.RT && g.RT.critHit) ? g.RT.critHit : [];
     const jobs = [];
+    prunePreds(g);
+    if (CONFIG.autoChasePredators && !tabHidden()) {
+      for (const Pd of predsOn(g, g.S.cur, 0)) {
+        if (predFree(Pd) && hits.some((h) => h.kind === 'pred' && h.Pd === Pd)) jobs.push({ id: 'pred:' + Pd.id, type: 'pred', pred: Pd });
+      }
+    }
     if (CONFIG.autoCatchRats) {
       for (const sp of ratSpotsOn(g, g.S.cur)) {
         if (critterFree('rat:' + sp.key) && hits.some((h) => h.kind === 'rat' && h.key === sp.key)) jobs.push({ id: 'rat:' + sp.key, type: 'rat', key: sp.key });
@@ -851,6 +946,7 @@
 
   // 別座島有沒有這類事做（那座島沒畫出來，只看狀態）：全島輪流時用來決定要不要切過去
   function critterWork(g, mi) {
+    if (CONFIG.autoChasePredators && !tabHidden() && predsOn(g, mi, PRED_HOP_MIN_LEFT_MS).some(predFree)) return true;
     if (CONFIG.autoCatchRats && ratSpotsOn(g, mi).some((sp) => critterFree('rat:' + sp.key))) return true;
     if (CONFIG.autoGroomPets && dirtyPetsOn(g, mi).some((P) => critterFree('groom:' + P.id))) return true;
     return false;
@@ -925,7 +1021,8 @@
     let r = { ok: false, why: '' };
     try {
       const api = critterApi();
-      r = api ? await (job.type === 'rat' ? tapRats(g, api, job) : groomPet(g, api, job)) : { ok: false, why: '找不到遊戲的點擊介面（__farm222）' };
+      const work = job.type === 'pred' ? tapPred : job.type === 'rat' ? tapRats : groomPet;
+      r = api ? await work(g, api, job) : { ok: false, why: '找不到遊戲的點擊介面（__farm222）' };
     } finally {
       if (r.ok) {
         critterCd.delete(job.id);
@@ -933,11 +1030,28 @@
       } else {
         const c = critterCd.get(job.id) || { fails: 0, until: 0 };
         c.fails += 1;
-        c.until = Date.now() + Math.min(300000, CRITTER_RETRY_MS * Math.pow(2, c.fails - 1));
+        // 天敵只給 60 秒：很快再試、上限也低；老鼠、梳毛不趕時間，退避得久一點
+        c.until = Date.now() + (job.type === 'pred'
+          ? Math.min(PRED_RETRY_MAX_MS, PRED_RETRY_MS * Math.pow(2, c.fails - 1))
+          : Math.min(300000, CRITTER_RETRY_MS * Math.pow(2, c.fails - 1)));
         critterCd.set(job.id, c);
         critterHint = r.why || '沒成功';
       }
     }
+  }
+
+  // 這個週期有沒有「點動物」的事要做：有就做並回傳 true（這個週期用掉了）。predOnly＝只看天敵（比賣出、收成都急，tick 一開始先問一次）
+  async function critterStep(g, predOnly) {
+    const cj = critterJobs(g).find((j) => !predOnly || j.type === 'pred');
+    if (!cj) return false;
+    // 玩家的工具不是我們用的四種（例如「移除」「搬移」「建造」）時，遊戲可能不把點擊當成點動物：先切到「收成」工具
+    if (!SCRIPT_TOOLS.includes(g.S.sel.tool) && !ensureToolIs(g, 'hand')) {
+      setStatus('切換工具中（點動物）…');
+      return true;
+    }
+    setStatus(cj.type === 'pred' ? '趕' + PRED_NAMES[cj.pred.kind] + '中…' : cj.type === 'rat' ? '抓老鼠中…' : '替' + cj.pet.name + (cj.pet.kind === 'cat' ? '梳毛' : '洗澡') + '中…');
+    await critterFlow(g, cj);
+    return true;
   }
 
   // ───────────────────────── 寵物飼料（貓、狗）─────────────────────────
@@ -1696,7 +1810,7 @@
     if (islandHint && !dry) hints.push(islandHint); // 有多座島：說明現在在哪座、是全島輪流還是只做這座
     if (partsHint) hints.push('機器人耗材：' + partsHint);
     if (petFoodHint && !dry) hints.push('寵物飼料：' + petFoodHint);
-    if (critterHint && !dry) hints.push('老鼠／寵物：' + critterHint);
+    if (critterHint && !dry) hints.push('老鼠／寵物／天敵：' + critterHint);
 
     // 一次只用一種工具：抓蟲要「照顧」工具、播種／收成／魚池要「播種」工具、撿東西要「收成」工具、澆水要「澆水」工具。
     // 目前的工具還有事做就繼續用，做完才換，避免每個週期都來回切換；
@@ -2103,6 +2217,13 @@
       stuckMarked = false;
     }
     if (now < holdUntil || now - lastHopAt < CONFIG.islandHopMinMs) return false;
+    // 別座島出現天敵（只給 60 秒）：不等輪到、也不管這座島有沒有事做，立刻切過去趕。每隻天敵最多為牠切一次島
+    const urgent = urgentPred(g);
+    if (urgent) {
+      const res = hopTo(g, urgent.mi, PRED_NAMES[urgent.Pd.kind] + '出現了');
+      if (res === 'hopped') predHopped.add(urgent.Pd.id);
+      return res !== 'failed';
+    }
     let target = null;
     let why = '';
     if (r.work) {
@@ -2193,6 +2314,9 @@
     const multi = islandTrack(g);
     const plans = multi ? planOthers(g) : null;
 
+    // 天敵（黃鼠狼、狐狸、野狼）出現後只給 60 秒：比賣出、收成都急，先點牠（只在這座島畫面上看得到時；別座島的見 islandAfter）
+    if (CONFIG.autoChasePredators && (await critterStep(g, true))) return;
+
     const info = storageInfo(g);
     const nearlyFull =
       (info.free !== null && info.free <= CONFIG.sellWhenFreeAtMost) ||
@@ -2204,18 +2328,8 @@
     }
 
     // 這座島上有老鼠、髒了的貓狗：點畫面上的牠（抓老鼠＝同一處點 3 下；梳毛／洗澡＝點寵物再按小選單的按鈕）。免費、不動倉庫
-    if (CONFIG.autoCatchRats || CONFIG.autoGroomPets) {
-      const cj = critterJobs(g)[0];
-      if (cj) {
-        // 玩家的工具不是我們用的四種（例如「移除」「搬移」「建造」）時，遊戲可能不把點擊當成點動物：先切到「收成」工具
-        if (!SCRIPT_TOOLS.includes(g.S.sel.tool) && !ensureToolIs(g, 'hand')) {
-          setStatus('切換工具中（點動物）…');
-          return;
-        }
-        setStatus(cj.type === 'rat' ? '抓老鼠中…' : '替' + cj.pet.name + (cj.pet.kind === 'cat' ? '梳毛' : '洗澡') + '中…');
-        await critterFlow(g, cj);
-        return;
-      }
+    if (CONFIG.autoCatchRats || CONFIG.autoGroomPets || CONFIG.autoChasePredators) {
+      if (await critterStep(g, false)) return;
     } else {
       critterHint = '';
     }
@@ -2286,6 +2400,7 @@
       petFoodBlockedUntil = 0;
       petFoodHint = '';
       critterCd.clear();
+      predHopped.clear();
       critterHint = '';
       status = '啟動中';
       timer = setInterval(onTick, CONFIG.tickMs);
@@ -2452,7 +2567,7 @@
         '果樹 ' + stats.fruit + '｜魚池 ' + stats.fish + '｜機器 ' + stats.machine + '｜雜物 ' + stats.clean +
           '｜餵食 ' + stats.feed
       );
-      lines.push('蜂蜜 ' + stats.honey + '｜出貨 ' + stats.meat + '｜換耗材 ' + stats.parts + '｜寵物飼料 ' + stats.petFood + '｜施肥 ' + stats.fert + '｜抓老鼠 ' + stats.rat + '｜梳毛 ' + stats.groom);
+      lines.push('蜂蜜 ' + stats.honey + '｜出貨 ' + stats.meat + '｜換耗材 ' + stats.parts + '｜寵物飼料 ' + stats.petFood + '｜施肥 ' + stats.fert + '｜抓老鼠 ' + stats.rat + '｜梳毛 ' + stats.groom + '｜趕天敵 ' + stats.chase);
       if (islandLine) lines.push(islandLine);
       // 上一次真的做成事的時間：數字不動、又一直很久以前，就是停住了，看下一行的原因
       lines.push(lastActionAt ? '上次動作：' + fmtSec((Date.now() - lastActionAt) / 1000) + '前' : '開啟後還沒做成任何事');
@@ -2930,6 +3045,7 @@
       bool('autoCatchPests', '自動捉蟲', '作物、果樹長蟲時，用「照顧」工具的「捉蟲」（免費）點到抓光。絕不噴農藥、不用化肥（那會花錢，還會讓有機作物變一般作物）。'),
       bool('catchPestsOnOtherCrops', '其他作物與果樹長蟲也抓', '蟲會往旁邊擴散，所以其他種類的作物、果樹長蟲也一起抓（抓蟲免費，不影響收成與庫存）。'),
       bool('autoCatchRats', '點老鼠抓掉', '農場的倉庫、垃圾站跑進老鼠時（9 級起），點畫面上的老鼠抓掉（同一處點 3 下抓 1 隻，免費）。老鼠每隻每小時偷吃 1 個作物和 1 個飼料、或咬破垃圾袋；養貓、貓頭鷹也會自動抓。只能點目前顯示的島（全島輪流會切過去）。'),
+      bool('autoChasePredators', '點天敵趕走', '黃鼠狼（偷蛋）、狐狸（咬傷家禽）、野狼（嚇到家畜）出現後只給 60 秒（有「警報」專長的狗在場 3 分鐘）就動手，腳本點牠 3 下趕走，免費。已經有狗在趕的不搶。全島輪流時，別座島出現天敵會立刻切過去。注意：遊戲畫面要有在更新才點得到，分頁在背景、最小化時不會動作。'),
       bool('autoGroomPets', '貓狗髒了就梳毛／洗澡', '貓、狗頭上出現「髒了」時，點牠、按小選單的「梳毛」（貓）／「洗澡」（狗），免費、好感度 +3，髒的標記就消失。同一天第一次點到牠也會順便打招呼（好感度 +2）。睡著的（晚上）點了沒反應，會等醒了再點。'),
       bool('autoFertilize', '長時間作物自動施有機肥', '還在長、生長時間夠長（見下一項）的作物，用「照顧」工具的「有機肥」施肥：每次種植 1 個、產量與生長速度各 +10%，作物仍是有機作物。只用倉庫現有的有機肥（來自堆肥桶），沒有就不施、不會去買；絕不用化肥。'),
       num('fertilizeMinMinutes', '生長時間至少幾分鐘才施肥', '有機肥數量有限（一台 Lv5 堆肥桶每小時約 3 個），留給生長時間長、單價高的作物。預設 180 分鐘（3 小時，水稻起）。肥料不夠分時，先給單次收成價值高的。', 1, 1440, '分鐘'),

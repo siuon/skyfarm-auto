@@ -30,6 +30,18 @@ function attachWorld(env, o = {}) {
     pets: JSON.parse(JSON.stringify(o.pets || [])), // 寵物：[{ kind: 'dog'|'cat', hungry… }]
   };
   if (o.rats) S.rats = Object.assign({ barn: 0 }, o.rats); // 倉庫的老鼠：S.rats.barn 隻（官方 S.rats = { barn }）
+  // 天敵（官方 S.preds）：{ id, kind, mi, k（牠要打的動物的格子）, t0, until（動手的時間，毫秒）, taps, fleeAt, by, done }。
+  // 測試用 untilIn（從現在起還有幾毫秒動手；官方是 60 秒，有警報狗 180 秒）；by／fleeAt（相對現在的毫秒 fleeAtIn）＝狗已經在趕
+  if (o.preds) {
+    S.preds = o.preds.map((p, i) => {
+      const now = env.clock.now;
+      const Pd = { id: p.id ?? 'pd' + (i + 1), kind: p.kind || 'fox', mi: p.mi ?? 0, k: p.k || '2,2', t0: now, until: now + (p.untilIn ?? 60000), taps: p.taps || 0, fx: 0, fy: 0 };
+      if (p.by) Pd.by = p.by;
+      if (p.done) Pd.done = now; // 已經結束的天敵（得手或被趕走了）：官方 S.preds 還會留 6 秒才清掉
+      if (p.fleeAtIn != null) Pd.fleeAt = now + p.fleeAtIn;
+      return Pd;
+    });
+  }
   const RT = { mv: null, agents: Object.assign({}, o.agents || {}), pick53: null, lastAnimalTap: null, lastAnimalTapAt: 0 };
   let M = S.maps[S.cur]; // 目前顯示的那座島（切島時換掉）
   const edgeFence = new Set(o.edgeFence || []);
@@ -49,6 +61,7 @@ function attachWorld(env, o = {}) {
     shopBuys: [], // 飼料商店買了什麼 [品項, 數量]
     askShown: 0, askCancelled: 0, askLog: [], // 購買確認視窗：跳出幾次、按了取消幾次、每次的標題與價格
     ratsCaught: 0, ratTaps: [], petTaps: [], groomed: [], petStrokes: 0, taps: [], frame: 0, // 點動物：抓到幾隻老鼠、每次點到的老鼠地點／寵物、梳過的寵物、所有 meteorTap 的螢幕座標
+    predTaps: [], predHits: [], rainbowCoins: 0, // 點天敵：每一下點到哪隻（id）、得手的天敵（時間到沒被趕走）、被彩虹吃掉的點擊領到的金幣
   };
 
   // ───── 倉庫 ─────
@@ -723,11 +736,28 @@ function attachWorld(env, o = {}) {
   const denHere = (P) => P.den != null && Object.values(M.tiles).some((T) => T && T.uid === P.den);
   RT.petAg = RT.petAg || {};
   for (const id of o.petSleep || []) RT.petAg[id] = { sleep: true };
+  // 官方 stepPreds：時間到還沒被趕走＝得手（記下來，讓測試斷言「有沒有被偷」）；牠要打的動物不見了＝結束
+  const settlePreds = () => {
+    if (o.noSettle) return; // 測試用：不讓假遊戲自己結算天敵（官方 stepPreds 是遊戲迴圈在跑，腳本讀狀態時可能還沒結算）
+    const now = env.clock.now;
+    for (const Pd of S.preds || []) {
+      if (Pd.done) continue;
+      const T = S.maps[Pd.mi] && S.maps[Pd.mi].tiles[Pd.k];
+      if (!T || T.t !== 'animal') { Pd.done = now; continue; }
+      if (Pd.fleeAt && now >= Pd.fleeAt) { Pd.done = now; Pd.ok = false; world.predsFled = (world.predsFled || []).concat(Pd.id); continue; }
+      if (!Pd.fleeAt && now >= Pd.until) { Pd.done = now; Pd.ok = true; world.predHits.push(Pd.id); }
+    }
+  };
   Object.defineProperty(RT, 'critHit', {
     configurable: true, enumerable: true,
     get() {
       const hits = [];
       let j = 0;
+      settlePreds();
+      for (const Pd of S.preds || []) { // 官方：這座島上、還沒結束、不在逃跑中的天敵才可以點（kind 'pred'，半徑 16）
+        if (Pd.mi !== S.cur || (Pd.done && !Pd.fleeAt) || (Pd.fleeAt && env.clock.now >= Pd.fleeAt)) continue;
+        hits.push({ x: 200 + 40 * (j++) + (world.frame % 5), y: 150, r: 16, kind: 'pred', Pd });
+      }
       for (const sp of ratSpotsFake()) for (let i = 0; i < sp.n; i++) hits.push({ x: 100 + 40 * (j++) + (world.frame % 7), y: 60 + 9 * i, r: 10, kind: 'rat', key: sp.key, i }); // 老鼠一直在跑：位置每次都不一樣
       for (const P of S.pets) if (denHere(P)) hits.push({ x: 300 + 25 * (P.id % 5), y: 90, r: 14, kind: 'pet', P });
       return hits;
@@ -743,6 +773,16 @@ function attachWorld(env, o = {}) {
     for (const h of RT.critHit) { const d = Math.hypot(wx - h.x, wy - h.y); if (d < h.r && d < bd) { bd = d; best = h; } }
     world.frame += 1;
     if (!best) return false; // 點空了：官方這時真的滑鼠點擊會接著 act(格子)；meteorTap 本身什麼都不做
+    if (best.kind === 'pred') {
+      const Pd = best.Pd;
+      world.predTaps.push(Pd.id);
+      if (o.rainbowFirst && !world.rainbowCoins) { world.rainbowCoins = 10; S.player.coins += 10; return true; } // 官方 tapRainbow86：天敵剛好蓋在彩虹上時，第一下只領金幣、不算趕天敵（回 true）
+      if (o.predBroken) return true; // 點到了但遊戲沒記（壞掉）：meteorTap 仍回 true
+      Pd.taps = (Pd.taps || 0) + 1;
+      if (o.predOpensPopup) showPopup([['button[data-af2672="pet"]', mkBtn('af2672', 'pet', () => { world.petStrokes += 1; })]], undefined); // 旁邊的寵物被點到時遊戲會跳寵物小選單（腳本要收乾淨）
+      if (Pd.taps >= (o.chaseTaps || (CFG.predators && CFG.predators.chaseTaps) || 3)) { Pd.fleeAt = env.clock.now; Pd.by = 'player'; }
+      return true;
+    }
     if (best.kind === 'rat') {
       const key = 'rat:' + best.key, now = win.performance.now();
       RT.ratTap = RT.ratTap && RT.ratTap.key === key && now - RT.ratTap.at < 3000 ? RT.ratTap : { key, n: 0 }; // 3 秒內同一處才算連續

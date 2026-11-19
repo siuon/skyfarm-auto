@@ -210,6 +210,19 @@ test('設定 rats：9 級起、倉庫與垃圾站各有老鼠上限、點老鼠 
   assert.ok(CFG.buildings.barn && CFG.buildings.trash_station, '農產倉庫（barn）與垃圾站（trash_station）是建築，老鼠的位置看這兩種建築格子');
 });
 
+test('設定 predators：三種天敵（腳本的名稱表對得上）、點 3 下趕走、出現後給的時間、柵欄擋不住；沒有新種類（腳本只認這三種）', () => {
+  const P = CFG.predators;
+  assert.ok(P, '設定要有 predators');
+  assert.equal(P.chaseTaps, 3, '點 3 下趕走（腳本讀 chaseTaps，這裡鎖住預設）');
+  assert.ok(isNum(P.approachSeconds) && P.approachSeconds >= 10 && P.approachSeconds <= 600, '出現後給的時間（秒）：' + P.approachSeconds);
+  assert.equal(P.fencesStop, false, '柵欄擋不住天敵（所以腳本不管圍欄）');
+  for (const [k, name] of [['weasel', '黃鼠狼'], ['fox', '狐狸'], ['wolf', '野狼']]) {
+    assert.ok(P[k] && P[k].name === name && isNum(P[k].level), k + ' 要叫「' + name + '」（腳本的狀態列用這三個名字）');
+  }
+  const kinds = Object.keys(P).filter((k) => P[k] && typeof P[k] === 'object' && P[k].name && isNum(P[k].level)).sort();
+  assert.deepEqual(kinds, ['fox', 'weasel', 'wolf'], '天敵種類變了：腳本的 PRED_NAMES 要跟著改');
+});
+
 test('設定 care.org（有機肥）：用倉庫的 organic_fert、每次種植 1 個、仍是有機作物；化肥則會讓作物失去有機身分且要花錢（腳本絕不用）', () => {
   const O = CFG.care.options.org;
   assert.ok(O, '照顧工具要有「有機肥」選項（id=org）');

@@ -77,7 +77,7 @@ test('點了老鼠但沒抓到（遊戲沒反應）：不狂點——退避一�
   const ctx = boot({ tiles: { '6,3': barn() }, rats: { barn: 2 }, cap: 5000, ratBroken: true });
   await run(ctx, 6);
   assert.equal(ctx.world.taps.length, 3, '試了一輪（3 下）就暫停');
-  assert.match(ctx.t.status, /老鼠／寵物：點了老鼠但沒抓到/);
+  assert.match(ctx.t.status, /老鼠／寵物／天敵：點了老鼠但沒抓到/);
   await ctx.clock.advance(16000);
   await run(ctx, 2);
   assert.equal(ctx.world.taps.length, 6, '過了重試間隔再試一輪');

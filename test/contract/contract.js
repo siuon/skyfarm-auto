@@ -80,6 +80,21 @@ module.exports = {
       ],
     },
     {
+      name: '天敵（S.preds）：出現後 until 毫秒才動手；點到牠（RT.critHit 的 kind "pred"，半徑 16）每一下 Pd.taps +1，滿 chaseTaps 設 fleeAt 與 by="player"；有狗在趕的天敵一出現就設好 by／fleeAt（腳本不碰）；時間到還沒 fleeAt＝得手；牠打的動物不見了就結束',
+      game: [
+        "const predList = () => (S.preds = S.preds || []);",
+        "RT.critHit.push({ x: c.cx, y: c.cy - 10, r: 16, kind: 'pred', Pd }); }",
+        "if (Pd.mi !== mi || (Pd.done && !Pd.fleeAt)) continue;",
+        "if (best.kind === 'pred'){ const Pd = best.Pd; Pd.taps = (Pd.taps || 0) + 1;",
+        "if (Pd.taps >= (PREDC.chaseTaps || 3)){ Pd.fleeAt = Date.now(); Pd.by = 'player';",
+        "(PREDC.approachSeconds || 60)) * 1000, taps: 0, fx: from[0], fy: from[1] };",
+        "if (ok){ Pd.by = D.id; Pd.byName = D.name; Pd.fleeAt = t + (3 + Math.random() * 5) * 1000; break; }",
+        "if (!Pd.fleeAt && t >= Pd.until){ Pd.done = t; Pd.ok = true; predHit(Pd, M, T, t); } }",
+        "if (!T || T.t !== 'animal'){ Pd.done = t; continue; }",
+        "if (Pd.by && Pd.by !== 'player'){ stat('guard');",
+      ],
+    },
+    {
       name: '寵物髒了：P.aff2672.dirty；小選單的「梳毛／洗澡」按下去 → act2672(X, "bath")：髒的標記清掉、好感度 +3',
       game: [
         "const A = X.aff2672 = X.aff2672 || { p: 0, last: 0 };",

@@ -106,6 +106,16 @@ test('靜態檢查：機器小選單只會按我們指定的按鈕（collect / l
   assert.match(wants[0], /'collect'.*'load'.*'feed'/);
 });
 
+test('靜態檢查：天敵只用「點」趕——腳本從不寫天敵的欄位（taps／fleeAt／by／done）、不寫 S.preds，也不用 act 點格子去碰牠', () => {
+  assert.doesNotMatch(code, /\bPd\.(taps|fleeAt|by|byName|done|ok|until|until)\s*(=(?!=)|\+\+|\+=)/, '腳本不能自己改天敵的狀態（taps、fleeAt、by、done…都只有遊戲自己改）');
+  assert.doesNotMatch(code, /\.preds\s*(=(?!=)|\.(push|splice|pop|shift|unshift|sort|length\s*=))/, '腳本不能寫 S.preds');
+  const start = code.indexOf('async function tapPred(');
+  const block = code.slice(start, code.indexOf('function critterJobs(', start)); // tapPred 到下一個函式之前（註解已被剝掉）
+  assert.ok(block.includes('api.tap('), '趕天敵用 meteorTap（api.tap）點');
+  assert.doesNotMatch(block, /\.act\(/, '趕天敵的程式不用 act（act 會點地圖格子）');
+  assert.doesNotMatch(block, /\.click\(/, '趕天敵的程式不按任何按鈕');
+});
+
 test('不在頁面上留下東西：window 只多一個「已載入」旗標，沒有任何物件或函式', () => {
   const e = load({ shim: false });
   const added = Object.getOwnPropertyNames(e.win).filter((k) => !e.keysBefore.has(k));

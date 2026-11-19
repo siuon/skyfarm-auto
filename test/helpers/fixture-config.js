@@ -20,6 +20,8 @@ function makeCfg() {
       },
     },
     rules: { moistMaxLevel: 4, waterPerTap: 1, animalStackMax: 0 },
+    // 天敵（結構同官方 predators：點 3 下趕走、出現後給 60 秒、柵欄擋不住；只放腳本讀得到的欄位）
+    predators: { weasel: { name: '黃鼠狼', level: 9 }, fox: { name: '狐狸', level: 10 }, wolf: { name: '野狼', level: 12 }, approachSeconds: 60, chaseTaps: 3, fencesStop: false },
     levels: [
       { level: 1, unlocks: ['wheat', 'pasture', 'egg_hen'] },
       { level: 2, unlocks: ['corn', 'corn_cake_machine'] },
